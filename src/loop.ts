@@ -163,12 +163,8 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     branchName = await getCurrentBranch(workDir, logger);
   }
 
-  const aiEnv = await buildAiEnv({
-    envFiles: config.aiEnvFiles,
-    envOverrides: config.ai.env,
-    repoRoot,
-    workDir,
-    logger
+  const aiEnv = buildAiEnv({
+    envOverrides: config.ai.env
   });
   const aiConfig = { ...config.ai, env: aiEnv };
 

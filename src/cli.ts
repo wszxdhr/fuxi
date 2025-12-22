@@ -30,7 +30,6 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--ai-args <args...>', 'AI CLI 参数', [])
     .option('--ai-prompt-arg <flag>', '用于传入 prompt 的参数（为空则使用 stdin）')
     .option('--ai-env <key=value>', 'AI CLI 环境变量（可重复）', collect, [])
-    .option('--ai-env-file <path>', 'AI CLI 环境变量文件（可重复）', collect, [])
     .option('--notes-file <path>', '持久化记忆文件', defaultNotesPath())
     .option('--plan-file <path>', '计划文件', defaultPlanPath())
     .option('--workflow-doc <path>', 'AI 工作流程说明文件', defaultWorkflowDoc())
@@ -60,7 +59,6 @@ export async function runCli(argv: string[]): Promise<void> {
         aiArgs: (options.aiArgs as string[]) ?? [],
         aiPromptArg: options.aiPromptArg as string | undefined,
         aiEnv: aiEnvPairs,
-        aiEnvFiles: (options.aiEnvFile as string[]) ?? [],
         notesFile: options.notesFile as string,
         planFile: options.planFile as string,
         workflowDoc: options.workflowDoc as string,

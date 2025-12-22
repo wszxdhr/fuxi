@@ -63,7 +63,6 @@ export interface LoopConfig {
   readonly iterations: number;
   readonly stopSignal: string;
   readonly ai: AiCliConfig;
-  readonly aiEnvFiles: string[];
   readonly workflowFiles: WorkflowFiles;
   readonly git: WorktreeConfig;
   readonly tests: TestConfig;

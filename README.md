@@ -24,7 +24,7 @@ node dist/cli.js run \
   --stop-signal "<<DONE>>"
 ```
 - `--ai-cli`/`--ai-args`：指向系统已有的 AI CLI，提示文本通过 stdin（或 `--ai-prompt-arg`）传入。
-- `--ai-env`/`--ai-env-file`：为 AI CLI 追加环境变量（支持 `.env` 文件）；未显式指定时会自动加载仓库根目录或 worktree 下的 `.env`（存在则生效）。
+- `--ai-env`：为 AI CLI 追加环境变量（KEY=VALUE），与当前进程环境合并。
 - `--worktree`：在独立分支 worktree 中作业；基线分支通过 `--base-branch` 指定。
 - 使用 `--worktree` 创建的临时工作目录，在确认分支已提交、推送且存在 PR 后会自动清理（仅删除本次创建的 worktree）。
 - `--run-tests`/`--run-e2e`：运行测试命令（默认 `yarn test`、`yarn e2e`）。
