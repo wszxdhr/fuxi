@@ -1,4 +1,4 @@
-import { AiCliConfig, IterationRecord } from './types';
+import { AiCliConfig, AiResult, IterationRecord, TokenUsage } from './types';
 import { runCommand } from './utils';
 import { Logger } from './logger';
 
@@ -36,7 +36,45 @@ export function buildPrompt(input: PromptInput): string {
   return sections.join('\n\n');
 }
 
-export async function runAi(prompt: string, ai: AiCliConfig, logger: Logger, cwd: string): Promise<string> {
+function pickNumber(pattern: RegExp, text: string): number | undefined {
+  const match = pattern.exec(text);
+  if (!match || match.length < 2) return undefined;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isNaN(value) ? undefined : value;
+}
+
+export function parseTokenUsage(logs: string): TokenUsage | null {
+  const total = pickNumber(/total[_\s]tokens:\s*(\d+)/i, logs);
+  const input = pickNumber(/(input|prompt)[_\s]tokens:\s*(\d+)/i, logs);
+  const output = pickNumber(/(output|completion)[_\s]tokens:\s*(\d+)/i, logs);
+  const consumed = pickNumber(/tokens?\s+used:\s*(\d+)/i, logs) ?? pickNumber(/consumed\s+(\d+)\s+tokens?/i, logs);
+
+  const totalTokens = total ?? (input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : consumed);
+  if (totalTokens === undefined) return null;
+
+  return {
+    inputTokens: input,
+    outputTokens: output,
+    totalTokens
+  };
+}
+
+function addOptional(a?: number, b?: number): number | undefined {
+  if (typeof a !== 'number' && typeof b !== 'number') return undefined;
+  return (a ?? 0) + (b ?? 0);
+}
+
+export function mergeTokenUsage(previous: TokenUsage | null, current?: TokenUsage | null): TokenUsage | null {
+  if (!current) return previous;
+  if (!previous) return { ...current };
+  return {
+    inputTokens: addOptional(previous.inputTokens, current.inputTokens),
+    outputTokens: addOptional(previous.outputTokens, current.outputTokens),
+    totalTokens: previous.totalTokens + current.totalTokens
+  };
+}
+
+export async function runAi(prompt: string, ai: AiCliConfig, logger: Logger, cwd: string): Promise<AiResult> {
   const args = [...ai.args];
   const verboseCommand = ai.promptArg
     ? [ai.command, ...ai.args, ai.promptArg, '<prompt>'].join(' ')
@@ -68,7 +106,11 @@ export async function runAi(prompt: string, ai: AiCliConfig, logger: Logger, cwd
   }
 
   logger.success('AI 输出完成');
-  return result.stdout.trim();
+  const usage = parseTokenUsage([result.stdout, result.stderr].filter(Boolean).join('\n'));
+  return {
+    output: result.stdout.trim(),
+    usage
+  };
 }
 
 export function formatIterationRecord(record: IterationRecord): string {

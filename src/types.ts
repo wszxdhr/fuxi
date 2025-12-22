@@ -7,6 +7,17 @@ export interface AiCliConfig {
   readonly env?: Record<string, string>;
 }
 
+export interface TokenUsage {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly totalTokens: number;
+}
+
+export interface AiResult {
+  readonly output: string;
+  readonly usage: TokenUsage | null;
+}
+
 export interface WorktreeConfig {
   readonly useWorktree: boolean;
   readonly branchName?: string;

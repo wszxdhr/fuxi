@@ -1,10 +1,10 @@
 import fs from 'fs-extra';
 import path from 'node:path';
-import { buildPrompt, formatIterationRecord, runAi } from './ai';
+import { buildPrompt, formatIterationRecord, mergeTokenUsage, runAi } from './ai';
 import { createPr, listFailedRuns, viewPr } from './gh';
 import { Logger } from './logger';
 import { commitAll, ensureWorktree, getCurrentBranch, getRepoRoot, pushBranch } from './git';
-import { LoopConfig, TestRunResult, WorkflowFiles } from './types';
+import { LoopConfig, TestRunResult, TokenUsage, WorkflowFiles } from './types';
 import { appendSection, ensureFile, isoNow, readFileSafe, runCommand } from './utils';
 
 async function ensureWorkflowFiles(workflowFiles: WorkflowFiles): Promise<void> {
@@ -79,8 +79,7 @@ function reRootWorkflowFiles(workflowFiles: WorkflowFiles, repoRoot: string, wor
 }
 
 function buildBodyFile(workDir: string): string {
-  const output = path.join(workDir, 'memory', 'pr-body.md');
-  return output;
+  return path.join(workDir, 'memory', 'pr-body.md');
 }
 
 async function writePrBody(bodyPath: string, notes: string, plan: string): Promise<void> {
@@ -117,6 +116,10 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     branchName = await getCurrentBranch(workDir, logger);
   }
 
+  let accumulatedUsage: TokenUsage | null = null;
+  let lastTestResults: TestRunResult[] | null = null;
+  let prFailed = false;
+
   for (let i = 1; i <= config.iterations; i += 1) {
     const workflowGuide = await readFileSafe(workflowFiles.workflowDoc);
     const plan = await readFileSafe(workflowFiles.planFile);
@@ -133,29 +136,33 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     logger.debug(`第 ${i} 轮提示长度: ${prompt.length}`);
 
     logger.info(`第 ${i} 轮提示构建完成，调用 AI CLI...`);
-    const aiOutput = await runAi(prompt, config.ai, logger, workDir);
+    const aiResult = await runAi(prompt, config.ai, logger, workDir);
+    accumulatedUsage = mergeTokenUsage(accumulatedUsage, aiResult.usage);
 
-    const hitStop = aiOutput.includes(config.stopSignal);
+    const hitStop = aiResult.output.includes(config.stopSignal);
     let testResults: TestRunResult[] = [];
-    try {
-      testResults = await runTests(config, workDir, logger);
-    } catch (error) {
-      const errorMessage = String(error);
-      logger.warn(`测试执行异常: ${errorMessage}`);
-      testResults = [{
-        kind: 'unit',
-        command: config.tests.unitCommand ?? '未知测试命令',
-        success: false,
-        exitCode: -1,
-        stdout: '',
-        stderr: trimOutput(errorMessage)
-      }];
+    const shouldRunTests = config.runTests || config.runE2e;
+    if (shouldRunTests) {
+      try {
+        testResults = await runTests(config, workDir, logger);
+      } catch (error) {
+        const errorMessage = String(error);
+        logger.warn(`测试执行异常: ${errorMessage}`);
+        testResults = [{
+          kind: 'unit',
+          command: config.tests.unitCommand ?? '未知测试命令',
+          success: false,
+          exitCode: -1,
+          stdout: '',
+          stderr: trimOutput(errorMessage)
+        }];
+      }
     }
 
     const record = formatIterationRecord({
       iteration: i,
       prompt,
-      aiOutput,
+      aiOutput: aiResult.output,
       timestamp: isoNow(),
       testResults
     });
@@ -163,25 +170,39 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     await appendSection(workflowFiles.notesFile, record);
     logger.success(`已将第 ${i} 轮输出写入 ${workflowFiles.notesFile}`);
 
-    if (hitStop) {
+    lastTestResults = testResults;
+
+    const hasTestFailure = testResults.some(result => !result.success);
+
+    if (hitStop && !hasTestFailure) {
       logger.info(`检测到停止标记 ${config.stopSignal}，提前结束循环`);
       break;
     }
+    if (hitStop && hasTestFailure) {
+      logger.info(`检测到停止标记 ${config.stopSignal}，但测试失败，继续进入下一轮修复`);
+    }
   }
 
-  if (config.autoCommit) {
+  const lastTestFailed = lastTestResults?.some(result => !result.success) ?? false;
+
+  if (lastTestFailed) {
+    logger.warn('存在未通过的测试，已跳过自动提交/推送/PR');
+  }
+
+  if (config.autoCommit && !lastTestFailed) {
     await commitAll('chore: fuxi 自动迭代提交', workDir, logger).catch(error => {
       logger.warn(String(error));
     });
   }
 
-  if (config.autoPush && branchName) {
+  if (config.autoPush && branchName && !lastTestFailed) {
     await pushBranch(branchName, workDir, logger).catch(error => {
       logger.warn(String(error));
     });
   }
 
-  if (config.pr.enable && branchName) {
+  if (config.pr.enable && branchName && !lastTestFailed) {
+    logger.info('开始创建 PR...');
     const bodyFile = config.pr.bodyPath ?? buildBodyFile(workDir);
     const notes = await readFileSafe(workflowFiles.notesFile);
     const plan = await readFileSafe(workflowFiles.planFile);
@@ -196,13 +217,27 @@ export async function runLoop(config: LoopConfig): Promise<void> {
           logger.warn(`Actions 失败: ${run.name} (${run.status}/${run.conclusion ?? 'unknown'}) ${run.url}`);
         });
       }
+    } else {
+      prFailed = true;
+      logger.error('PR 创建失败，详见上方 gh 输出');
     }
-  } else if (branchName) {
+  } else if (branchName && !config.pr.enable) {
+    logger.info('未开启 PR 创建（--pr 未传），尝试查看已有 PR');
     const prInfo = await viewPr(branchName, workDir, logger);
-    if (prInfo) {
-      logger.info(`已有 PR: ${prInfo.url}`);
-    }
+    if (prInfo) logger.info(`已有 PR: ${prInfo.url}`);
   }
 
-  logger.success('fuxi 迭代流程结束');
+  if (accumulatedUsage) {
+    const input = accumulatedUsage.inputTokens ?? '-';
+    const output = accumulatedUsage.outputTokens ?? '-';
+    logger.info(`Token 消耗汇总：输入 ${input}｜输出 ${output}｜总计 ${accumulatedUsage.totalTokens}`);
+  } else {
+    logger.info('未解析到 Token 消耗信息，可检查 AI CLI 输出格式是否包含 token 提示');
+  }
+
+  if (lastTestFailed || prFailed) {
+    throw new Error('流程存在未解决的问题（测试未通过或 PR 创建失败）');
+  }
+
+  logger.success(`fuxi 迭代流程结束｜Token 总计 ${accumulatedUsage?.totalTokens ?? '未知'}`);
 }

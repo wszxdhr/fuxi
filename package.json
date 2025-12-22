@@ -17,10 +17,10 @@
     "build": "tsup",
     "dev": "ts-node src/cli.ts",
     "start": "node dist/cli.js",
-    "test": "node --test --require ts-node/register tests/**/*.ts"
+    "test": "node --test --require ts-node/register tests/**/*.ts",
+    "e2e": "node --test --require ts-node/register tests/e2e/**/*.ts"
   },
   "dependencies": {
-    "chalk": "^5.6.2",
     "commander": "^14.0.2",
     "execa": "^9.6.1",
     "fs-extra": "^11.3.3"

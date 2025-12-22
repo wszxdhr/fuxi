@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, defaultWorkflowDoc } from './config';
 import { runLoop } from './loop';
+import { defaultLogger } from './logger';
 
 function parseInteger(value: string, defaultValue: number): number {
   const parsed = Number.parseInt(value, 10);
@@ -85,7 +86,8 @@ export async function runCli(argv: string[]): Promise<void> {
 
 if (require.main === module) {
   runCli(process.argv).catch(error => {
-    console.error(error);
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    defaultLogger.error(message);
     process.exitCode = 1;
   });
 }
