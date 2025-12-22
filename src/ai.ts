@@ -76,12 +76,29 @@ export function mergeTokenUsage(previous: TokenUsage | null, current?: TokenUsag
 
 export async function runAi(prompt: string, ai: AiCliConfig, logger: Logger, cwd: string): Promise<AiResult> {
   const args = [...ai.args];
+  const verboseCommand = ai.promptArg
+    ? [ai.command, ...ai.args, ai.promptArg, '<prompt>'].join(' ')
+    : [ai.command, ...ai.args, '<stdin>'].join(' ');
+
   let result;
   if (ai.promptArg) {
     args.push(ai.promptArg, prompt);
-    result = await runCommand(ai.command, args, { cwd, env: ai.env });
+    result = await runCommand(ai.command, args, {
+      cwd,
+      env: ai.env,
+      logger,
+      verboseLabel: 'ai',
+      verboseCommand
+    });
   } else {
-    result = await runCommand(ai.command, args, { cwd, env: ai.env, input: prompt });
+    result = await runCommand(ai.command, args, {
+      cwd,
+      env: ai.env,
+      input: prompt,
+      logger,
+      verboseLabel: 'ai',
+      verboseCommand
+    });
   }
 
   if (result.exitCode !== 0) {
@@ -97,7 +114,7 @@ export async function runAi(prompt: string, ai: AiCliConfig, logger: Logger, cwd
 }
 
 export function formatIterationRecord(record: IterationRecord): string {
-  return [
+  const lines = [
     `### 迭代 ${record.iteration} ｜ ${record.timestamp}`,
     '',
     '#### 提示上下文',
@@ -110,5 +127,22 @@ export function formatIterationRecord(record: IterationRecord): string {
     record.aiOutput,
     '```',
     ''
-  ].join('\n');
+  ];
+
+  if (record.testResults && record.testResults.length > 0) {
+    lines.push('#### 测试结果');
+    record.testResults.forEach(result => {
+      const label = result.kind === 'unit' ? '单元测试' : 'e2e 测试';
+      const status = result.success ? '✅ 通过' : '❌ 失败';
+      lines.push(`${status} ｜ ${label} ｜ 命令: ${result.command} ｜ 退出码: ${result.exitCode}`);
+      if (!result.success) {
+        lines.push('```');
+        lines.push(result.stderr || result.stdout || '（无输出）');
+        lines.push('```');
+        lines.push('');
+      }
+    });
+  }
+
+  return lines.join('\n');
 }

@@ -9,6 +9,11 @@ async function getExeca() {
 }
 
 export async function runCommand(command: string, args: string[], options: CommandOptions = {}): Promise<CommandResult> {
+  const label = options.verboseLabel ?? 'cmd';
+  const displayCmd = options.verboseCommand ?? [command, ...args].join(' ');
+  const cwd = options.cwd ?? process.cwd();
+  options.logger?.debug(`[${label}] ${displayCmd} (cwd: ${cwd})`);
+
   try {
     const { execa } = await getExeca();
     const result = await execa(command, args, {
@@ -17,18 +22,42 @@ export async function runCommand(command: string, args: string[], options: Comma
       input: options.input,
       all: false
     });
-    return {
+    const commandResult: CommandResult = {
       stdout: String(result.stdout ?? ''),
       stderr: String(result.stderr ?? ''),
       exitCode: result.exitCode ?? 0
     };
+    if (options.logger) {
+      const stdout = commandResult.stdout.trim();
+      const stderr = commandResult.stderr.trim();
+      if (stdout.length > 0) {
+        options.logger.debug(`[${label}] stdout: ${stdout}`);
+      }
+      if (stderr.length > 0) {
+        options.logger.debug(`[${label}] stderr: ${stderr}`);
+      }
+      options.logger.debug(`[${label}] exit ${commandResult.exitCode}`);
+    }
+    return commandResult;
   } catch (error) {
     const execaError = error as ExecaError;
-    return {
+    const commandResult: CommandResult = {
       stdout: String(execaError.stdout ?? ''),
       stderr: String(execaError.stderr ?? String(error)),
       exitCode: execaError.exitCode ?? 1
     };
+    if (options.logger) {
+      const stdout = commandResult.stdout.trim();
+      const stderr = commandResult.stderr.trim();
+      if (stdout.length > 0) {
+        options.logger.debug(`[${label}] stdout: ${stdout}`);
+      }
+      if (stderr.length > 0) {
+        options.logger.debug(`[${label}] stderr: ${stderr}`);
+      }
+      options.logger.debug(`[${label}] exit ${commandResult.exitCode}`);
+    }
+    return commandResult;
   }
 }
 

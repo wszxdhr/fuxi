@@ -1,3 +1,5 @@
+import type { Logger } from './logger';
+
 export interface AiCliConfig {
   readonly command: string;
   readonly args: string[];
@@ -28,20 +30,13 @@ export interface TestConfig {
   readonly e2eCommand?: string;
 }
 
-export type TestStatus = 'skipped' | 'passed' | 'failed';
-
-export interface SingleTestResult {
-  readonly kind: 'unit' | 'e2e';
-  readonly status: TestStatus;
-  readonly command?: string;
-  readonly exitCode?: number;
-  readonly message?: string;
-}
-
 export interface TestRunResult {
-  readonly unit: SingleTestResult;
-  readonly e2e: SingleTestResult;
-  readonly hasFailure: boolean;
+  readonly kind: 'unit' | 'e2e';
+  readonly command: string;
+  readonly success: boolean;
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
 }
 
 export interface PrConfig {
@@ -79,6 +74,9 @@ export interface CommandOptions {
   readonly cwd?: string;
   readonly env?: Record<string, string>;
   readonly input?: string;
+  readonly logger?: Logger;
+  readonly verboseLabel?: string;
+  readonly verboseCommand?: string;
 }
 
 export interface CommandResult {
@@ -92,4 +90,5 @@ export interface IterationRecord {
   readonly prompt: string;
   readonly aiOutput: string;
   readonly timestamp: string;
+  readonly testResults?: TestRunResult[];
 }

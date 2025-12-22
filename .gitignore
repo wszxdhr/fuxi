@@ -1,9 +1,39 @@
-node_modules
-.dist
-coverage
-dist
-.eslintcache
+# 依赖目录（体积巨大，无业务逻辑）
+node_modules/
+
+# 构建输出和打包目录
+dist/
+build/
+out/
+.output/
+.next/
+target/
+
+# 环境变量和敏感配置文件（防止泄露密钥）
+.env
+.env.local
+.env.*
+*.key
+*.pem
+
+# 日志和缓存文件
 *.log
+logs/
+.cache/
+*.tmp
+
+# 系统文件
 .DS_Store
-.yarn/install-state.gz
-.yarn/cache
+Thumbs.db
+
+# 代码覆盖率报告
+coverage/
+.nyc_output/
+
+# IDE和编辑器配置（可选）
+.vscode/
+.idea/
+.history/
+
+# ts 增量编译
+*.tsbuildinfo
