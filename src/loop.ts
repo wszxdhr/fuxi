@@ -4,13 +4,13 @@ import { buildPrompt, formatIterationRecord, runAi } from './ai';
 import { createPr, listFailedRuns, viewPr } from './gh';
 import { Logger } from './logger';
 import { commitAll, ensureWorktree, getCurrentBranch, getRepoRoot, pushBranch } from './git';
-import { LoopConfig, TestRunResult } from './types';
+import { LoopConfig, TestRunResult, WorkflowFiles } from './types';
 import { appendSection, ensureFile, isoNow, readFileSafe, runCommand } from './utils';
 
-async function ensureWorkflowFiles(config: LoopConfig): Promise<void> {
-  await ensureFile(config.workflowFiles.workflowDoc, '# AI 工作流程基线\n');
-  await ensureFile(config.workflowFiles.planFile, '# 计划\n');
-  await ensureFile(config.workflowFiles.notesFile, '# 持久化记忆\n');
+async function ensureWorkflowFiles(workflowFiles: WorkflowFiles): Promise<void> {
+  await ensureFile(workflowFiles.workflowDoc, '# AI 工作流程基线\n');
+  await ensureFile(workflowFiles.planFile, '# 计划\n');
+  await ensureFile(workflowFiles.notesFile, '# 持久化记忆\n');
 }
 
 const MAX_TEST_LOG_LENGTH = 4000;
@@ -63,6 +63,21 @@ async function runTests(config: LoopConfig, workDir: string, logger: Logger): Pr
   return results;
 }
 
+function reRootPath(filePath: string, repoRoot: string, workDir: string): string {
+  const relative = path.relative(repoRoot, filePath);
+  if (relative.startsWith('..')) return filePath;
+  return path.join(workDir, relative);
+}
+
+function reRootWorkflowFiles(workflowFiles: WorkflowFiles, repoRoot: string, workDir: string): WorkflowFiles {
+  if (repoRoot === workDir) return workflowFiles;
+  return {
+    workflowDoc: reRootPath(workflowFiles.workflowDoc, repoRoot, workDir),
+    notesFile: reRootPath(workflowFiles.notesFile, repoRoot, workDir),
+    planFile: reRootPath(workflowFiles.planFile, repoRoot, workDir)
+  };
+}
+
 function buildBodyFile(workDir: string): string {
   const output = path.join(workDir, 'memory', 'pr-body.md');
   return output;
@@ -83,14 +98,16 @@ export async function runLoop(config: LoopConfig): Promise<void> {
   const logger = new Logger({ verbose: config.verbose });
   const repoRoot = await getRepoRoot(config.cwd, logger);
   logger.debug(`仓库根目录: ${repoRoot}`);
-  await ensureWorkflowFiles(config);
 
   const workDir = config.git.useWorktree
     ? await ensureWorktree(config.git, repoRoot, logger)
     : repoRoot;
   logger.debug(`工作目录: ${workDir}`);
 
-  const planContent = await readFileSafe(config.workflowFiles.planFile);
+  const workflowFiles = reRootWorkflowFiles(config.workflowFiles, repoRoot, workDir);
+  await ensureWorkflowFiles(workflowFiles);
+
+  const planContent = await readFileSafe(workflowFiles.planFile);
   if (planContent.trim().length === 0) {
     logger.warn('plan 文件为空，建议 AI 首轮生成计划');
   }
@@ -101,9 +118,9 @@ export async function runLoop(config: LoopConfig): Promise<void> {
   }
 
   for (let i = 1; i <= config.iterations; i += 1) {
-    const workflowGuide = await readFileSafe(config.workflowFiles.workflowDoc);
-    const plan = await readFileSafe(config.workflowFiles.planFile);
-    const notes = await readFileSafe(config.workflowFiles.notesFile);
+    const workflowGuide = await readFileSafe(workflowFiles.workflowDoc);
+    const plan = await readFileSafe(workflowFiles.planFile);
+    const notes = await readFileSafe(workflowFiles.notesFile);
     logger.debug(`加载提示上下文，长度：workflow=${workflowGuide.length}, plan=${plan.length}, notes=${notes.length}`);
 
     const prompt = buildPrompt({
@@ -143,8 +160,8 @@ export async function runLoop(config: LoopConfig): Promise<void> {
       testResults
     });
 
-    await appendSection(config.workflowFiles.notesFile, record);
-    logger.success(`已将第 ${i} 轮输出写入 ${config.workflowFiles.notesFile}`);
+    await appendSection(workflowFiles.notesFile, record);
+    logger.success(`已将第 ${i} 轮输出写入 ${workflowFiles.notesFile}`);
 
     if (hitStop) {
       logger.info(`检测到停止标记 ${config.stopSignal}，提前结束循环`);
@@ -166,8 +183,8 @@ export async function runLoop(config: LoopConfig): Promise<void> {
 
   if (config.pr.enable && branchName) {
     const bodyFile = config.pr.bodyPath ?? buildBodyFile(workDir);
-    const notes = await readFileSafe(config.workflowFiles.notesFile);
-    const plan = await readFileSafe(config.workflowFiles.planFile);
+    const notes = await readFileSafe(workflowFiles.notesFile);
+    const plan = await readFileSafe(workflowFiles.planFile);
     await writePrBody(bodyFile, notes, plan);
 
     const prInfo = await createPr(branchName, { ...config.pr, bodyPath: bodyFile }, workDir, logger);
