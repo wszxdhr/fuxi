@@ -4,6 +4,7 @@ import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, default
 import { applyShortcutArgv, loadGlobalConfig } from './global-config';
 import { generateBranchName, getCurrentBranch } from './git';
 import { buildAutoLogFilePath } from './logs';
+import { runAliasViewer } from './alias-viewer';
 import { runLogsViewer } from './logs-viewer';
 import { runLoop } from './loop';
 import { defaultLogger } from './logger';
@@ -246,6 +247,14 @@ export async function runCli(argv: string[]): Promise<void> {
     .description('查看历史日志')
     .action(async () => {
       await runLogsViewer();
+    });
+
+  program
+    .command('alias')
+    .alias('aliases')
+    .description('浏览全局 alias 配置')
+    .action(async () => {
+      await runAliasViewer();
     });
 
   await program.parseAsync(effectiveArgv);

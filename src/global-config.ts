@@ -12,6 +12,15 @@ export interface ShortcutConfig {
 }
 
 /**
+ * 全局 alias 配置条目。
+ */
+export interface AliasEntry {
+  readonly name: string;
+  readonly command: string;
+  readonly source: 'alias' | 'shortcut';
+}
+
+/**
  * 全局配置结构。
  */
 export interface GlobalConfig {
@@ -140,6 +149,20 @@ function parseTomlString(raw: string): string | null {
   return null;
 }
 
+function parseTomlKeyValue(line: string): { key: string; value: string } | null {
+  const equalIndex = findUnquotedIndex(line, '=');
+  if (equalIndex <= 0) return null;
+
+  const key = line.slice(0, equalIndex).trim();
+  const valuePart = line.slice(equalIndex + 1).trim();
+  if (!key || !valuePart) return null;
+
+  const parsedValue = parseTomlString(valuePart);
+  if (parsedValue === null) return null;
+
+  return { key, value: parsedValue };
+}
+
 function normalizeShortcutName(name: string): string | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
@@ -166,18 +189,10 @@ export function parseGlobalConfig(content: string): GlobalConfig {
     }
 
     if (currentSection !== 'shortcut') continue;
+    const parsed = parseTomlKeyValue(line);
+    if (!parsed) continue;
 
-    const equalIndex = findUnquotedIndex(line, '=');
-    if (equalIndex <= 0) continue;
-
-    const key = line.slice(0, equalIndex).trim();
-    const valuePart = line.slice(equalIndex + 1).trim();
-    if (!key || !valuePart) continue;
-
-    const parsedValue = parseTomlString(valuePart);
-    if (parsedValue === null) continue;
-
-    shortcut[key] = parsedValue;
+    shortcut[parsed.key] = parsed.value;
   }
 
   const name = normalizeShortcutName(shortcut.name ?? '');
@@ -192,6 +207,54 @@ export function parseGlobalConfig(content: string): GlobalConfig {
       command
     }
   };
+}
+
+/**
+ * 解析 alias 配置条目（含 shortcut 作为补充来源）。
+ */
+export function parseAliasEntries(content: string): AliasEntry[] {
+  const lines = content.split(/\r?\n/);
+  let currentSection: string | null = null;
+  const entries: AliasEntry[] = [];
+  const names = new Set<string>();
+
+  for (const rawLine of lines) {
+    const line = stripTomlComment(rawLine).trim();
+    if (!line) continue;
+
+    const sectionMatch = /^\[(.+)\]$/.exec(line);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim();
+      continue;
+    }
+
+    if (currentSection !== 'alias') continue;
+    const parsed = parseTomlKeyValue(line);
+    if (!parsed) continue;
+
+    const name = normalizeShortcutName(parsed.key);
+    const command = parsed.value.trim();
+    if (!name || !command) continue;
+    if (names.has(name)) continue;
+
+    names.add(name);
+    entries.push({
+      name,
+      command,
+      source: 'alias'
+    });
+  }
+
+  const shortcut = parseGlobalConfig(content).shortcut;
+  if (shortcut && !names.has(shortcut.name)) {
+    entries.push({
+      name: shortcut.name,
+      command: shortcut.command,
+      source: 'shortcut'
+    });
+  }
+
+  return entries;
 }
 
 /**

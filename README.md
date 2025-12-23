@@ -61,6 +61,20 @@ wheel-ai run --task "补充文档" --ai-cli "claude" --ai-args "--model" "claude
 - 仅支持一个 `[shortcut]`，且 `name` 不能包含空白字符。
 - 配置文件不存在或内容不合法会被忽略，不影响正常使用。
 
+## alias 浏览
+可在 `~/.wheel-ai/config.toml` 中维护多个 alias，便于集中查看常用命令组合：
+
+```toml
+[alias]
+daily = "--task \"补充文档\" --ai-cli \"claude\""
+weekly = "run --task \"补充测试\" --run-tests"
+```
+
+运行 `wheel-ai alias` 进入交互式列表：
+- ↑/↓ 选择 alias
+- 底部会显示选中的命令内容
+- alias 名称不能包含空白字符
+
 ## 持久化记忆
 - `docs/ai-workflow.md`：AI 执行前的工作流基线，需作为提示前置输入。
 - `memory/plan.md`：分阶段计划（可被 AI 重写保持最新）。

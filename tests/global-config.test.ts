@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyShortcutArgv, parseGlobalConfig, splitCommandArgs } from '../src/global-config';
+import { applyShortcutArgv, parseAliasEntries, parseGlobalConfig, splitCommandArgs } from '../src/global-config';
 
 test('parseGlobalConfig 读取 shortcut 配置', () => {
   const content = `
@@ -48,5 +48,35 @@ command = "run --task \\\"demo\\\" --run-tests"
     'demo',
     '--run-tests',
     '--run-e2e'
+  ]);
+});
+
+test('parseAliasEntries 读取 alias 并附带 shortcut', () => {
+  const content = `
+[alias]
+daily = "--task \\"补充文档\\""
+weekly = "run --task \\"补充测试\\" --run-tests"
+
+[shortcut]
+name = "quick"
+command = "--run-e2e"
+`;
+  const entries = parseAliasEntries(content);
+  assert.deepEqual(entries, [
+    {
+      name: 'daily',
+      command: '--task "补充文档"',
+      source: 'alias'
+    },
+    {
+      name: 'weekly',
+      command: 'run --task "补充测试" --run-tests',
+      source: 'alias'
+    },
+    {
+      name: 'quick',
+      command: '--run-e2e',
+      source: 'shortcut'
+    }
   ]);
 });
