@@ -16,7 +16,7 @@ export interface CurrentRegistryEntry extends RunMetadata {
 
 export type CurrentRegistry = Record<string, CurrentRegistryEntry>;
 
-const LOGS_DIR = path.join(os.homedir(), '.fuxi', 'logs');
+const LOGS_DIR = path.join(os.homedir(), '.hamster-wheel-cli', 'logs');
 
 export function getLogsDir(): string {
   return LOGS_DIR;
@@ -55,7 +55,7 @@ export function sanitizeBranchName(branchName: string): string {
 
 export function buildAutoLogFilePath(branchName: string, date: Date = new Date()): string {
   const safeBranch = sanitizeBranchName(branchName) || 'unknown';
-  return path.join(LOGS_DIR, `fuxi-auto-log-${formatTimeString(date)}-${safeBranch}.log`);
+  return path.join(LOGS_DIR, `hamster-wheel-cli-auto-log-${formatTimeString(date)}-${safeBranch}.log`);
 }
 
 export function getLogMetaPath(logFile: string): string {

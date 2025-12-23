@@ -29,7 +29,7 @@ test('buildRunningLogKeys 会合并 registry key 与 logFile 名称', () => {
 });
 
 test('loadLogEntries 会排除运行中的日志与非 .log 文件', async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fuxi-logs-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'hamster-wheel-cli-logs-'));
   try {
     const logA = path.join(tempDir, 'alpha.log');
     const logB = path.join(tempDir, 'beta.log');

@@ -1,12 +1,12 @@
 {
-  "name": "fuxi",
-  "version": "0.1.0",
+  "name": "hamster-wheel-cli",
+  "version": "1.0.0",
   "description": "基于 AI CLI 的持续迭代开发工具，封装工作流、git worktree 与 gh PR 协作",
   "main": "dist/index.js",
   "bin": {
-    "fuxi": "dist/cli.js"
+    "hamster-wheel-cli": "dist/cli.js"
   },
-  "repository": "git@github.com:wszxdhr/fuxi.git",
+  "repository": "git@github.com:wszxdhr/hamster-wheel-cli.git",
   "author": "ZX <wszxdhr@126.com>",
   "license": "MIT",
   "type": "commonjs",

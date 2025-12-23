@@ -8,7 +8,7 @@ import { Logger } from '../../src/logger';
 import type { PrConfig } from '../../src/types';
 
 test('createPr 遇到已存在 PR 提示时视为成功', async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fuxi-gh-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'hamster-wheel-cli-gh-'));
   const ghPath = path.join(tempDir, 'gh');
   const prInfo = {
     number: 12,

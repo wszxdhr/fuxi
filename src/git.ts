@@ -281,5 +281,5 @@ export async function removeWorktree(worktreePath: string, repoRoot: string, log
 export function generateBranchName(): string {
   const now = new Date();
   const stamp = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}-${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
-  return `fuxi/${stamp}`;
+  return `hamster-wheel-cli/${stamp}`;
 }

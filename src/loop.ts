@@ -410,7 +410,7 @@ export async function runLoop(config: LoopConfig): Promise<void> {
       });
     }
 
-    logger.success(`fuxi 迭代流程结束｜Token 总计 ${accumulatedUsage?.totalTokens ?? '未知'}`);
+    logger.success(`hamster-wheel-cli 迭代流程结束｜Token 总计 ${accumulatedUsage?.totalTokens ?? '未知'}`);
   } catch (error) {
     runError = error instanceof Error ? error.message : String(error);
     throw error;
