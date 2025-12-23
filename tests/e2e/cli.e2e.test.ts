@@ -20,6 +20,8 @@ test('CLI 帮助信息可正常输出', async () => {
   assert.ok(stdout.includes('--log-file'));
   assert.ok(stdout.includes('--background'));
   assert.ok(stdout.includes('--skip-install'));
+  assert.ok(stdout.includes('--webhook'));
+  assert.ok(stdout.includes('--webhook-timeout'));
 });
 
 test('CLI monitor 帮助信息可正常输出', async () => {

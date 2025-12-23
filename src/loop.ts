@@ -10,6 +10,7 @@ import { createRunTracker } from './runtime-tracker';
 import { buildFallbackSummary, buildSummaryPrompt, ensurePrBodySections, parseDeliverySummary } from './summary';
 import { CommitMessage, DeliverySummary, LoopConfig, TestRunResult, TokenUsage, WorkflowFiles, WorktreeResult } from './types';
 import { appendSection, ensureFile, isoNow, readFileSafe, runCommand } from './utils';
+import { buildWebhookPayload, sendWebhookNotifications } from './webhook';
 
 async function ensureWorkflowFiles(workflowFiles: WorkflowFiles): Promise<void> {
   await ensureFile(workflowFiles.workflowDoc, '# AI 工作流程基线\n');
@@ -180,7 +181,33 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     logger
   });
 
+  let branchName = config.git.branchName;
+  let lastRound = 0;
+  let runError: string | null = null;
+
+  const notifyWebhook = async (event: 'task_start' | 'iteration_start' | 'task_end', iteration: number, stage: string): Promise<void> => {
+    const payload = buildWebhookPayload({
+      event,
+      task: config.task,
+      branch: branchName,
+      iteration,
+      stage
+    });
+    await sendWebhookNotifications(config.webhooks, payload, logger);
+  };
+
   try {
+    if (!branchName) {
+      try {
+        branchName = await getCurrentBranch(workDir, logger);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn(`读取分支名失败，webhook 中将缺失分支信息：${message}`);
+      }
+    }
+
+    await notifyWebhook('task_start', 0, '任务开始');
+
     if (config.skipInstall) {
       logger.info('已跳过依赖检查');
     } else {
@@ -195,11 +222,6 @@ export async function runLoop(config: LoopConfig): Promise<void> {
       logger.warn('plan 文件为空，建议 AI 首轮生成计划');
     }
 
-    let branchName = config.git.branchName;
-    if (!branchName) {
-      branchName = await getCurrentBranch(workDir, logger);
-    }
-
     const aiConfig = config.ai;
 
     let accumulatedUsage: TokenUsage | null = null;
@@ -207,9 +229,10 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     let lastAiOutput = '';
     let prInfo: GhPrInfo | null = null;
     let prFailed = false;
-    let lastRound = 0;
 
     for (let i = 1; i <= config.iterations; i += 1) {
+      await notifyWebhook('iteration_start', i, `开始第 ${i} 轮迭代`);
+
       const workflowGuide = await readFileSafe(workflowFiles.workflowDoc);
       const plan = await readFileSafe(workflowFiles.planFile);
       const notes = await readFileSafe(workflowFiles.notesFile);
@@ -388,7 +411,12 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     }
 
     logger.success(`fuxi 迭代流程结束｜Token 总计 ${accumulatedUsage?.totalTokens ?? '未知'}`);
+  } catch (error) {
+    runError = error instanceof Error ? error.message : String(error);
+    throw error;
   } finally {
+    const stage = runError ? '任务结束（失败）' : '任务结束';
+    await notifyWebhook('task_end', lastRound, stage);
     await runTracker?.finalize();
   }
 }

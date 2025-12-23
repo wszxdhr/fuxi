@@ -94,6 +94,14 @@ export interface PrConfig {
 }
 
 /**
+ * webhook 配置。
+ */
+export interface WebhookConfig {
+  readonly urls: string[];
+  readonly timeoutMs?: number;
+}
+
+/**
  * 工作流文件路径。
  */
 export interface WorkflowFiles {
@@ -114,6 +122,7 @@ export interface LoopConfig {
   readonly git: WorktreeConfig;
   readonly tests: TestConfig;
   readonly pr: PrConfig;
+  readonly webhooks?: WebhookConfig;
   readonly cwd: string;
   readonly logFile?: string;
   readonly verbose: boolean;

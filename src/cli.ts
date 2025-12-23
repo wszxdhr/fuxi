@@ -80,6 +80,8 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--pr-body <path>', 'PR 描述文件路径（可留空自动生成）')
     .option('--draft', '以草稿形式创建 PR', false)
     .option('--reviewer <user...>', 'PR reviewers', collect, [])
+    .option('--webhook <url>', 'webhook 通知 URL（可重复）', collect, [])
+    .option('--webhook-timeout <ms>', 'webhook 请求超时（毫秒）', value => parseInteger(value, 8000))
     .option('--stop-signal <token>', 'AI 输出中的停止标记', '<<DONE>>')
     .option('--log-file <path>', '日志输出文件路径')
     .option('--background', '切入后台运行', false)
@@ -148,6 +150,8 @@ export async function runCli(argv: string[]): Promise<void> {
         prBody: options.prBody as string | undefined,
         draft: Boolean(options.draft),
         reviewers: (options.reviewer as string[]) ?? [],
+        webhookUrls: (options.webhook as string[]) ?? [],
+        webhookTimeout: options.webhookTimeout as number | undefined,
         stopSignal: options.stopSignal as string,
         logFile,
         verbose: Boolean(options.verbose),

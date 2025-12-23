@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { AiCliConfig, LoopConfig, PrConfig, TestConfig, WorktreeConfig, WorkflowFiles } from './types';
+import { AiCliConfig, LoopConfig, PrConfig, TestConfig, WebhookConfig, WorktreeConfig, WorkflowFiles } from './types';
 import { resolvePath } from './utils';
 
 /**
@@ -29,6 +29,8 @@ export interface CliOptions {
   readonly prBody?: string;
   readonly draft: boolean;
   readonly reviewers?: string[];
+  readonly webhookUrls: string[];
+  readonly webhookTimeout?: number;
   readonly stopSignal: string;
   readonly logFile?: string;
   readonly verbose: boolean;
@@ -69,6 +71,14 @@ function buildPrConfig(options: CliOptions): PrConfig {
   };
 }
 
+function buildWebhookConfig(options: CliOptions): WebhookConfig | undefined {
+  if (!options.webhookUrls || options.webhookUrls.length === 0) return undefined;
+  return {
+    urls: options.webhookUrls,
+    timeoutMs: options.webhookTimeout
+  };
+}
+
 function buildWorkflowFiles(options: CliOptions, cwd: string): WorkflowFiles {
   return {
     workflowDoc: resolvePath(cwd, options.workflowDoc),
@@ -90,6 +100,7 @@ export function buildLoopConfig(options: CliOptions, cwd: string): LoopConfig {
     git: buildWorktreeConfig(options),
     tests: buildTestConfig(options),
     pr: buildPrConfig(options),
+    webhooks: buildWebhookConfig(options),
     cwd,
     logFile: options.logFile ? resolvePath(cwd, options.logFile) : undefined,
     verbose: options.verbose,

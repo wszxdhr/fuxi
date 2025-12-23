@@ -32,6 +32,8 @@ node dist/cli.js run \
 - `--skip-install`：任务启动前跳过依赖检查与自动安装。
 - `--log-file`：将日志写入指定文件（相对路径基于当前工作目录）。
 - `-v, --verbose`：输出完整调试日志（包含执行命令、stdout/stderr），便于开发排查。
+- `--webhook`：配置通知回调地址（可重复设置多个 URL）。
+- `--webhook-timeout`：webhook 请求超时（毫秒），默认 8000。
 
 ## 全局配置快捷指令
 支持在 `~/.fuxi/config.toml` 配置一个快捷指令，用于减少重复的命令行参数书写。
@@ -59,6 +61,28 @@ fuxi run --task "补充文档" --ai-cli "claude" --ai-args "--model" "claude-3-o
 - `docs/ai-workflow.md`：AI 执行前的工作流基线，需作为提示前置输入。
 - `memory/plan.md`：分阶段计划（可被 AI 重写保持最新）。
 - `memory/notes.md`：每轮迭代的输出、结论、风险与下一步。
+
+## Webhook 通知
+可通过 `--webhook` 配置通知回调地址，系统会在任务开始、第 N 轮开始、任务结束时发送 POST JSON。
+
+Payload 示例：
+```json
+{
+  "event": "task_start",
+  "task": "修复依赖安装错误",
+  "branch": "feat/webhooks",
+  "iteration": 0,
+  "stage": "任务开始",
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+字段说明：
+- `event`：`task_start` / `iteration_start` / `task_end`
+- `task`：任务描述
+- `branch`：分支名（可能为空）
+- `iteration`：当前轮次（任务开始为 0）
+- `stage`：当前节点描述
+- `timestamp`：ISO 时间戳
 
 ## 开发约束
 - 使用 yarn 管理依赖，TypeScript 避免 `any`。
