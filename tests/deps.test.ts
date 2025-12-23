@@ -65,8 +65,8 @@ test('buildInstallCommand 会根据包管理器生成命令', () => {
     hasLock: false
   });
 
-  assert.equal(yarnCommand, 'yarn install --check-files --frozen-lockfile');
-  assert.equal(yarnNoLockCommand, 'yarn install --check-files --no-lockfile');
+  assert.equal(yarnCommand, 'yarn install --frozen-lockfile');
+  assert.equal(yarnNoLockCommand, 'yarn install --no-lockfile');
   assert.equal(npmCommand, 'npm ci --no-audit --no-fund');
   assert.equal(pnpmCommand, 'pnpm install');
 });

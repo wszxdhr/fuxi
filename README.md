@@ -29,7 +29,31 @@ node dist/cli.js run \
 - `--run-tests`/`--run-e2e`：运行测试命令（默认 `yarn test`、`yarn e2e`）。
 - `--auto-commit`/`--auto-push`：迭代结束后自动提交与推送。
 - `--pr`：使用 `gh pr create` 创建 PR，可配合 `--pr-title`/`--pr-body`/`--draft`/`--reviewer`，未提供标题时会自动生成默认标题。
+- `--skip-install`：任务启动前跳过依赖检查与自动安装。
+- `--log-file`：将日志写入指定文件（相对路径基于当前工作目录）。
 - `-v, --verbose`：输出完整调试日志（包含执行命令、stdout/stderr），便于开发排查。
+
+## 全局配置快捷指令
+支持在 `~/.fuxi/config.toml` 配置一个快捷指令，用于减少重复的命令行参数书写。
+
+```toml
+[shortcut]
+name = "daily"
+command = "--task \"补充文档\" --ai-cli \"claude\" --ai-args \"--model\" \"claude-3-opus\" --worktree --run-tests"
+```
+
+使用时只需要输入快捷指令名称，后续参数会追加到快捷指令命令尾部：
+```bash
+fuxi daily --run-e2e
+```
+等价于：
+```bash
+fuxi run --task "补充文档" --ai-cli "claude" --ai-args "--model" "claude-3-opus" --worktree --run-tests --run-e2e
+```
+
+- `command` 中可选包含 `run`，会在展开时自动去除，避免重复。
+- 仅支持一个 `[shortcut]`，且 `name` 不能包含空白字符。
+- 配置文件不存在或内容不合法会被忽略，不影响正常使用。
 
 ## 持久化记忆
 - `docs/ai-workflow.md`：AI 执行前的工作流基线，需作为提示前置输入。

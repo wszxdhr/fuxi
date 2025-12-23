@@ -1,4 +1,7 @@
+import fs from 'fs-extra';
+
 type Colorizer = (value: string) => string;
+type ConsoleMethodName = 'log' | 'warn' | 'error';
 
 const wrap = (code: string): Colorizer => (value: string) => `\u001b[${code}m${value}\u001b[0m`;
 
@@ -11,41 +14,94 @@ const colors = {
   gray: wrap('90')
 } as const;
 
+/**
+ * 日志器配置项。
+ */
 export interface LoggerOptions {
   readonly verbose?: boolean;
+  readonly logFile?: string;
 }
 
+/**
+ * 带颜色的日志输出器，可选写入日志文件。
+ */
 export class Logger {
   private readonly verbose: boolean;
+  private readonly logFile?: string;
+  private logFileEnabled: boolean;
+  private logFileErrored: boolean;
 
   constructor(options: LoggerOptions = {}) {
     this.verbose = options.verbose ?? false;
+    const trimmedPath = options.logFile?.trim();
+    this.logFile = trimmedPath && trimmedPath.length > 0 ? trimmedPath : undefined;
+    this.logFileEnabled = Boolean(this.logFile);
+    this.logFileErrored = false;
+
+    if (this.logFile) {
+      try {
+        fs.ensureFileSync(this.logFile);
+      } catch (error) {
+        this.disableFileWithError(error);
+      }
+    }
   }
 
   info(message: string): void {
-    console.log(this.formatLine(colors.blue('info'), '  ', message));
+    this.emit('log', colors.blue, 'info', '  ', message);
   }
 
   success(message: string): void {
-    console.log(this.formatLine(colors.green('ok'), '    ', message));
+    this.emit('log', colors.green, 'ok', '    ', message);
   }
 
   warn(message: string): void {
-    console.warn(this.formatLine(colors.yellow('warn'), '  ', message));
+    this.emit('warn', colors.yellow, 'warn', '  ', message);
   }
 
   error(message: string): void {
-    console.error(this.formatLine(colors.red('err'), '   ', message));
+    this.emit('error', colors.red, 'err', '   ', message);
   }
 
   debug(message: string): void {
     if (!this.verbose) return;
-    console.log(this.formatLine(colors.magenta('dbg'), '   ', message));
+    this.emit('log', colors.magenta, 'dbg', '   ', message);
   }
 
-  private formatLine(label: string, padding: string, message: string): string {
-    const timestamp = this.formatTimestamp(new Date());
+  private emit(method: ConsoleMethodName, colorizer: Colorizer, label: string, padding: string, message: string): void {
+    const now = new Date();
+    const consoleLine = this.formatConsoleLine(now, colorizer(label), padding, message);
+    const fileLine = this.formatFileLine(now, label, padding, message);
+    console[method](consoleLine);
+    this.writeFileLine(fileLine);
+  }
+
+  private formatConsoleLine(date: Date, label: string, padding: string, message: string): string {
+    const timestamp = this.formatTimestamp(date);
     return `${colors.gray(timestamp)} ${label}${padding}${message}`;
+  }
+
+  private formatFileLine(date: Date, label: string, padding: string, message: string): string {
+    const timestamp = this.formatTimestamp(date);
+    return `${timestamp} ${label}${padding}${message}`;
+  }
+
+  private writeFileLine(line: string): void {
+    if (!this.logFileEnabled || !this.logFile) return;
+    try {
+      fs.appendFileSync(this.logFile, `${line}\n`, 'utf8');
+    } catch (error) {
+      this.disableFileWithError(error);
+    }
+  }
+
+  private disableFileWithError(error: unknown): void {
+    this.logFileEnabled = false;
+    if (this.logFileErrored) return;
+    this.logFileErrored = true;
+    const message = error instanceof Error ? error.message : String(error);
+    const target = this.logFile ? ` (${this.logFile})` : '';
+    console.warn(`日志文件写入失败${target}，已停止写入：${message}`);
   }
 
   private formatTimestamp(date: Date): string {
@@ -63,4 +119,7 @@ export class Logger {
   }
 }
 
+/**
+ * 默认日志器实例。
+ */
 export const defaultLogger = new Logger();

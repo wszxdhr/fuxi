@@ -11,6 +11,9 @@ const importExeca = async (): Promise<ExecaModule> => {
   return importer('execa');
 };
 
+/**
+ * 执行外部命令，支持日志与流式输出。
+ */
 export async function runCommand(command: string, args: string[], options: CommandOptions = {}): Promise<CommandResult> {
   const label = options.verboseLabel ?? 'cmd';
   const displayCmd = options.verboseCommand ?? [command, ...args].join(' ');
@@ -112,18 +115,30 @@ export async function runCommand(command: string, args: string[], options: Comma
   }
 }
 
+/**
+ * 返回 ISO 格式时间戳。
+ */
 export function isoNow(): string {
   return new Date().toISOString();
 }
 
+/**
+ * 基于 cwd 解析相对路径。
+ */
 export function resolvePath(cwd: string, target: string): string {
   return path.isAbsolute(target) ? target : path.join(cwd, target);
 }
 
+/**
+ * 确保目录存在。
+ */
 export async function ensureDir(dirPath: string): Promise<void> {
   await fs.mkdirp(dirPath);
 }
 
+/**
+ * 确保文件存在（必要时创建）。
+ */
 export async function ensureFile(filePath: string, initialContent = ''): Promise<void> {
   await ensureDir(path.dirname(filePath));
   const exists = await fs.pathExists(filePath);
@@ -132,17 +147,26 @@ export async function ensureFile(filePath: string, initialContent = ''): Promise
   }
 }
 
+/**
+ * 向文件末尾追加一段内容（包含换行）。
+ */
 export async function appendSection(filePath: string, content: string): Promise<void> {
   await ensureDir(path.dirname(filePath));
   await fs.appendFile(filePath, `\n${content}\n`, 'utf8');
 }
 
+/**
+ * 安全读取文件内容，若不存在则返回空字符串。
+ */
 export async function readFileSafe(filePath: string): Promise<string> {
   const exists = await fs.pathExists(filePath);
   if (!exists) return '';
   return fs.readFile(filePath, 'utf8');
 }
 
+/**
+ * 格式化 Markdown 标题。
+ */
 export function formatHeading(title: string): string {
   return `## ${title}\n`;
 }

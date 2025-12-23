@@ -3,10 +3,16 @@ import fs from 'fs-extra';
 import { Logger } from './logger';
 import { runCommand } from './utils';
 
+/**
+ * 支持的包管理器类型。
+ */
 export type PackageManager = 'yarn' | 'pnpm' | 'npm';
 
 type PackageManagerSource = 'packageManager' | 'lockfile' | 'default';
 
+/**
+ * 解析包管理器所需的提示信息。
+ */
 export interface PackageManagerHints {
   readonly packageManagerField?: string;
   readonly hasYarnLock: boolean;
@@ -15,6 +21,9 @@ export interface PackageManagerHints {
   readonly hasNpmShrinkwrap: boolean;
 }
 
+/**
+ * 包管理器解析结果。
+ */
 export interface PackageManagerResolution {
   readonly manager: PackageManager;
   readonly source: PackageManagerSource;
@@ -36,6 +45,9 @@ function hasLockForManager(manager: PackageManager, hints: PackageManagerHints):
   return hints.hasNpmLock || hints.hasNpmShrinkwrap;
 }
 
+/**
+ * 根据 packageManager 字段或锁文件推断包管理器。
+ */
 export function resolvePackageManager(hints: PackageManagerHints): PackageManagerResolution {
   const fromField = parsePackageManagerField(hints.packageManagerField);
   if (fromField) {
@@ -75,10 +87,13 @@ export function resolvePackageManager(hints: PackageManagerHints): PackageManage
   };
 }
 
+/**
+ * 生成安装依赖命令。
+ */
 export function buildInstallCommand(resolution: PackageManagerResolution): string {
   switch (resolution.manager) {
     case 'yarn': {
-      const args = ['yarn', 'install', '--check-files'];
+      const args = ['yarn', 'install'];
       if (resolution.hasLock) {
         args.push('--frozen-lockfile');
       } else {
@@ -99,7 +114,7 @@ export function buildInstallCommand(resolution: PackageManagerResolution): strin
       return args.join(' ');
     }
     default: {
-      return 'yarn install --check-files';
+      return 'yarn install';
     }
   }
 }
@@ -153,6 +168,9 @@ async function readPackageManagerHints(cwd: string, logger: Logger): Promise<Pac
   };
 }
 
+/**
+ * 确保依赖已安装（按锁文件或 packageManager 字段选择包管理器）。
+ */
 export async function ensureDependencies(cwd: string, logger: Logger): Promise<void> {
   const hints = await readPackageManagerHints(cwd, logger);
   if (!hints) {

@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, defaultWorkflowDoc } from './config';
+import { applyShortcutArgv, loadGlobalConfig } from './global-config';
 import { runLoop } from './loop';
 import { defaultLogger } from './logger';
 
@@ -13,7 +14,12 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+/**
+ * CLI 入口。
+ */
 export async function runCli(argv: string[]): Promise<void> {
+  const globalConfig = await loadGlobalConfig(defaultLogger);
+  const effectiveArgv = applyShortcutArgv(argv, globalConfig);
   const program = new Command();
 
   program
@@ -48,6 +54,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--draft', '以草稿形式创建 PR', false)
     .option('--reviewer <user...>', 'PR reviewers', collect, [])
     .option('--stop-signal <token>', 'AI 输出中的停止标记', '<<DONE>>')
+    .option('--log-file <path>', '日志输出文件路径')
     .option('-v, --verbose', '输出调试日志', false)
     .action(async (options) => {
       const cliOptions: CliOptions = {
@@ -75,6 +82,7 @@ export async function runCli(argv: string[]): Promise<void> {
         draft: Boolean(options.draft),
         reviewers: (options.reviewer as string[]) ?? [],
         stopSignal: options.stopSignal as string,
+        logFile: options.logFile as string | undefined,
         verbose: Boolean(options.verbose),
         skipInstall: Boolean(options.skipInstall)
       };
@@ -83,7 +91,7 @@ export async function runCli(argv: string[]): Promise<void> {
       await runLoop(config);
     });
 
-  await program.parseAsync(argv);
+  await program.parseAsync(effectiveArgv);
 }
 
 if (require.main === module) {

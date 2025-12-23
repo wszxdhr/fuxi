@@ -2,6 +2,9 @@ import { Logger } from './logger';
 import { PrConfig } from './types';
 import { runCommand } from './utils';
 
+/**
+ * PR 基础信息。
+ */
 export interface GhPrInfo {
   readonly number: number;
   readonly url: string;
@@ -10,6 +13,9 @@ export interface GhPrInfo {
   readonly headRefName: string;
 }
 
+/**
+ * Actions 运行信息。
+ */
 export interface GhRunInfo {
   readonly databaseId: number;
   readonly name: string;
@@ -60,6 +66,9 @@ function parseGhRunInfo(input: unknown): GhRunInfo | null {
   };
 }
 
+/**
+ * 解析 gh run list 的 JSON 输出。
+ */
 export function parseGhRunList(output: string): GhRunInfo[] {
   try {
     const parsed = JSON.parse(output);
@@ -72,12 +81,18 @@ export function parseGhRunList(output: string): GhRunInfo[] {
   }
 }
 
+/**
+ * 解析 PR 标题，必要时给出兜底标题。
+ */
 export function resolvePrTitle(branch: string, title?: string): string {
   const trimmed = title?.trim();
   if (trimmed) return trimmed;
   return `chore: 自动 PR (${branch})`;
 }
 
+/**
+ * 组装 gh pr create 所需参数。
+ */
 export function buildPrCreateArgs(branch: string, config: PrConfig): string[] {
   const args = ['pr', 'create', '--head', branch, '--title', resolvePrTitle(branch, config.title)];
   if (config.bodyPath) {
@@ -94,6 +109,9 @@ export function buildPrCreateArgs(branch: string, config: PrConfig): string[] {
   return args;
 }
 
+/**
+ * 读取当前分支 PR 信息。
+ */
 export async function viewPr(branch: string, cwd: string, logger: Logger): Promise<GhPrInfo | null> {
   const result = await runCommand('gh', ['pr', 'view', branch, '--json', 'number,title,url,state,headRefName'], {
     cwd,
@@ -116,6 +134,9 @@ export async function viewPr(branch: string, cwd: string, logger: Logger): Promi
   }
 }
 
+/**
+ * 创建 PR 并返回 PR 信息。
+ */
 export async function createPr(branch: string, config: PrConfig, cwd: string, logger: Logger): Promise<GhPrInfo | null> {
   if (!config.enable) return null;
   const args = buildPrCreateArgs(branch, config);
@@ -134,6 +155,9 @@ export async function createPr(branch: string, config: PrConfig, cwd: string, lo
   return viewPr(branch, cwd, logger);
 }
 
+/**
+ * 获取最近失败的 Actions 运行。
+ */
 export async function listFailedRuns(branch: string, cwd: string, logger: Logger): Promise<GhRunInfo[]> {
   const result = await runCommand('gh', ['run', 'list', '--branch', branch, '--json', 'databaseId,name,status,conclusion,url', '--limit', '5'], {
     cwd,

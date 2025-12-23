@@ -5,7 +5,8 @@ import { ensureDependencies } from './deps';
 import { GhPrInfo, createPr, listFailedRuns, viewPr } from './gh';
 import { Logger } from './logger';
 import { commitAll, ensureWorktree, getCurrentBranch, getRepoRoot, isBranchPushed, isWorktreeClean, pushBranch, removeWorktree } from './git';
-import { LoopConfig, TestRunResult, TokenUsage, WorkflowFiles, WorktreeResult } from './types';
+import { buildFallbackSummary, buildSummaryPrompt, ensurePrBodySections, parseDeliverySummary } from './summary';
+import { CommitMessage, DeliverySummary, LoopConfig, TestRunResult, TokenUsage, WorkflowFiles, WorktreeResult } from './types';
 import { appendSection, ensureFile, isoNow, readFileSafe, runCommand } from './utils';
 
 async function ensureWorkflowFiles(workflowFiles: WorkflowFiles): Promise<void> {
@@ -20,6 +21,20 @@ function trimOutput(output: string, limit = MAX_TEST_LOG_LENGTH): string {
   if (!output) return '';
   if (output.length <= limit) return output;
   return `${output.slice(0, limit)}\n……（输出已截断，原始长度 ${output.length} 字符）`;
+}
+
+async function safeCommandOutput(command: string, args: string[], cwd: string, logger: Logger, label: string, verboseCommand: string): Promise<string> {
+  const result = await runCommand(command, args, {
+    cwd,
+    logger,
+    verboseLabel: label,
+    verboseCommand
+  });
+  if (result.exitCode !== 0) {
+    logger.warn(`${label} 命令失败: ${result.stderr || result.stdout}`);
+    return '';
+  }
+  return result.stdout.trim();
 }
 
 async function runSingleTest(kind: 'unit' | 'e2e', command: string, cwd: string, logger: Logger): Promise<TestRunResult> {
@@ -83,15 +98,17 @@ function buildBodyFile(workDir: string): string {
   return path.join(workDir, 'memory', 'pr-body.md');
 }
 
-async function writePrBody(bodyPath: string, notes: string, plan: string): Promise<void> {
-  const lines = [
-    '# 变更摘要',
-    plan,
-    '\n# 关键输出',
-    notes
-  ];
+async function writePrBody(bodyPath: string, content: string, appendExisting: boolean): Promise<void> {
   await fs.mkdirp(path.dirname(bodyPath));
-  await fs.writeFile(bodyPath, lines.join('\n\n'), 'utf8');
+  let finalContent = content.trim();
+  if (appendExisting) {
+    const existing = await readFileSafe(bodyPath);
+    const trimmedExisting = existing.trim();
+    if (trimmedExisting.length > 0) {
+      finalContent = `${trimmedExisting}\n\n---\n\n${finalContent}`;
+    }
+  }
+  await fs.writeFile(bodyPath, `${finalContent}\n`, 'utf8');
 }
 
 interface WorktreeCleanupContext {
@@ -138,8 +155,11 @@ async function cleanupWorktreeIfSafe(context: WorktreeCleanupContext): Promise<v
   await removeWorktree(workDir, repoRoot, logger);
 }
 
+/**
+ * 执行主迭代循环。
+ */
 export async function runLoop(config: LoopConfig): Promise<void> {
-  const logger = new Logger({ verbose: config.verbose });
+  const logger = new Logger({ verbose: config.verbose, logFile: config.logFile });
   const repoRoot = await getRepoRoot(config.cwd, logger);
   logger.debug(`仓库根目录: ${repoRoot}`);
 
@@ -173,6 +193,7 @@ export async function runLoop(config: LoopConfig): Promise<void> {
 
   let accumulatedUsage: TokenUsage | null = null;
   let lastTestResults: TestRunResult[] | null = null;
+  let lastAiOutput = '';
   let prInfo: GhPrInfo | null = null;
   let prFailed = false;
 
@@ -194,6 +215,7 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     logger.info(`第 ${i} 轮提示构建完成，调用 AI CLI...`);
     const aiResult = await runAi(prompt, aiConfig, logger, workDir);
     accumulatedUsage = mergeTokenUsage(accumulatedUsage, aiResult.usage);
+    lastAiOutput = aiResult.output;
 
     const hitStop = aiResult.output.includes(config.stopSignal);
     let testResults: TestRunResult[] = [];
@@ -245,8 +267,45 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     logger.warn('存在未通过的测试，已跳过自动提交/推送/PR');
   }
 
+  let deliverySummary: DeliverySummary | null = null;
+  const shouldPrepareDelivery = !lastTestFailed && (config.autoCommit || config.pr.enable);
+  if (shouldPrepareDelivery) {
+    const [gitStatus, diffStat] = await Promise.all([
+      safeCommandOutput('git', ['status', '--short'], workDir, logger, 'git', 'git status --short'),
+      safeCommandOutput('git', ['diff', '--stat'], workDir, logger, 'git', 'git diff --stat')
+    ]);
+    const summaryPrompt = buildSummaryPrompt({
+      task: config.task,
+      plan: await readFileSafe(workflowFiles.planFile),
+      notes: await readFileSafe(workflowFiles.notesFile),
+      lastAiOutput,
+      testResults: lastTestResults,
+      gitStatus,
+      diffStat,
+      branchName
+    });
+    try {
+      const summaryResult = await runAi(summaryPrompt, aiConfig, logger, workDir);
+      accumulatedUsage = mergeTokenUsage(accumulatedUsage, summaryResult.usage);
+      deliverySummary = parseDeliverySummary(summaryResult.output);
+      if (!deliverySummary) {
+        logger.warn('AI 总结输出解析失败，使用兜底文案');
+      }
+    } catch (error) {
+      logger.warn(`AI 总结生成失败: ${String(error)}`);
+    }
+    if (!deliverySummary) {
+      deliverySummary = buildFallbackSummary({ task: config.task, testResults: lastTestResults });
+    }
+  }
+
   if (config.autoCommit && !lastTestFailed) {
-    await commitAll('chore: fuxi 自动迭代提交', workDir, logger).catch(error => {
+    const summary = deliverySummary ?? buildFallbackSummary({ task: config.task, testResults: lastTestResults });
+    const commitMessage: CommitMessage = {
+      title: summary.commitTitle,
+      body: summary.commitBody
+    };
+    await commitAll(commitMessage, workDir, logger).catch(error => {
       logger.warn(String(error));
     });
   }
@@ -259,12 +318,17 @@ export async function runLoop(config: LoopConfig): Promise<void> {
 
   if (config.pr.enable && branchName && !lastTestFailed) {
     logger.info('开始创建 PR...');
+    const summary = deliverySummary ?? buildFallbackSummary({ task: config.task, testResults: lastTestResults });
+    const prTitleCandidate = config.pr.title?.trim() || summary.prTitle;
+    const prBodyContent = ensurePrBodySections(summary.prBody, {
+      commitTitle: summary.commitTitle,
+      commitBody: summary.commitBody,
+      testResults: lastTestResults
+    });
     const bodyFile = config.pr.bodyPath ?? buildBodyFile(workDir);
-    const notes = await readFileSafe(workflowFiles.notesFile);
-    const plan = await readFileSafe(workflowFiles.planFile);
-    await writePrBody(bodyFile, notes, plan);
+    await writePrBody(bodyFile, prBodyContent, Boolean(config.pr.bodyPath));
 
-    const createdPr = await createPr(branchName, { ...config.pr, bodyPath: bodyFile }, workDir, logger);
+    const createdPr = await createPr(branchName, { ...config.pr, title: prTitleCandidate, bodyPath: bodyFile }, workDir, logger);
     prInfo = createdPr;
     if (createdPr) {
       logger.success(`PR 已创建: ${createdPr.url}`);
