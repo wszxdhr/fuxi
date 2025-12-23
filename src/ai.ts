@@ -39,7 +39,7 @@ export function buildPrompt(input: PromptInput): string {
 function pickNumber(pattern: RegExp, text: string): number | undefined {
   const match = pattern.exec(text);
   if (!match || match.length < 2) return undefined;
-  const value = Number.parseInt(match[1], 10);
+  const value = Number.parseInt(match[match.length - 1], 10);
   return Number.isNaN(value) ? undefined : value;
 }
 

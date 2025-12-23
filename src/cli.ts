@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, defaultWorkflowDoc } from './config';
+import { applyShortcutArgv, loadGlobalConfig } from './global-config';
 import { runLoop } from './loop';
 import { defaultLogger } from './logger';
 
@@ -14,6 +15,8 @@ function collect(value: string, previous: string[]): string[] {
 }
 
 export async function runCli(argv: string[]): Promise<void> {
+  const globalConfig = await loadGlobalConfig(defaultLogger);
+  const effectiveArgv = applyShortcutArgv(argv, globalConfig);
   const program = new Command();
 
   program
@@ -81,7 +84,7 @@ export async function runCli(argv: string[]): Promise<void> {
       await runLoop(config);
     });
 
-  await program.parseAsync(argv);
+  await program.parseAsync(effectiveArgv);
 }
 
 if (require.main === module) {
