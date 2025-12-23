@@ -17,6 +17,18 @@ export interface AiResult {
   readonly usage: TokenUsage | null;
 }
 
+export interface CommitMessage {
+  readonly title: string;
+  readonly body?: string;
+}
+
+export interface DeliverySummary {
+  readonly commitTitle: string;
+  readonly commitBody?: string;
+  readonly prTitle: string;
+  readonly prBody: string;
+}
+
 export interface WorktreeConfig {
   readonly useWorktree: boolean;
   readonly branchName?: string;

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Logger } from './logger';
-import { WorktreeConfig, WorktreeResult } from './types';
+import { CommitMessage, WorktreeConfig, WorktreeResult } from './types';
 import { runCommand, resolvePath } from './utils';
 
 async function branchExists(branch: string, cwd: string, logger?: Logger): Promise<boolean> {
@@ -158,7 +158,37 @@ export async function isBranchPushed(branchName: string, cwd: string, logger: Lo
   return true;
 }
 
-export async function commitAll(message: string, cwd: string, logger: Logger): Promise<void> {
+function normalizeCommitTitle(title: string): string {
+  return title.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeCommitBody(body?: string): string | undefined {
+  if (!body) return undefined;
+  const normalized = body.replace(/\r\n?/g, '\n').trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function formatCommitCommand(message: CommitMessage): string {
+  const title = normalizeCommitTitle(message.title) || 'chore: 更新迭代产出';
+  const parts = ['git commit -m', JSON.stringify(title)];
+  const body = normalizeCommitBody(message.body);
+  if (body) {
+    parts.push('-m', JSON.stringify(body));
+  }
+  return parts.join(' ');
+}
+
+function buildCommitArgs(message: CommitMessage): string[] {
+  const title = normalizeCommitTitle(message.title) || 'chore: 更新迭代产出';
+  const args = ['commit', '-m', title];
+  const body = normalizeCommitBody(message.body);
+  if (body) {
+    args.push('-m', body);
+  }
+  return args;
+}
+
+export async function commitAll(message: CommitMessage, cwd: string, logger: Logger): Promise<void> {
   const add = await runCommand('git', ['add', '-A'], {
     cwd,
     logger,
@@ -168,11 +198,11 @@ export async function commitAll(message: string, cwd: string, logger: Logger): P
   if (add.exitCode !== 0) {
     throw new Error(`git add 失败: ${add.stderr}`);
   }
-  const commit = await runCommand('git', ['commit', '-m', message], {
+  const commit = await runCommand('git', buildCommitArgs(message), {
     cwd,
     logger,
     verboseLabel: 'git',
-    verboseCommand: `git commit -m \"${message}\"`
+    verboseCommand: formatCommitCommand(message)
   });
   if (commit.exitCode !== 0) {
     logger.warn(`git commit 跳过或失败: ${commit.stderr}`);
