@@ -15,6 +15,7 @@ interface MonitorState {
   selectedKey?: string;
   pageOffsets: Map<string, number>;
   stickToBottom: Map<string, boolean>;
+  lastError?: string;
 }
 
 const REFRESH_INTERVAL = 1000;
@@ -70,10 +71,16 @@ function buildHeader(state: MonitorState, columns: number): string {
   return truncateLine(title, columns);
 }
 
-function buildStatus(task: TaskView, page: { current: number; total: number }, columns: number): string {
+function buildStatus(
+  task: TaskView,
+  page: { current: number; total: number },
+  columns: number,
+  errorMessage?: string
+): string {
   const meta = task.meta;
   const status = `轮次 ${meta.round} ｜ Token ${meta.tokenUsed} ｜ 页 ${page.current}/${page.total} ｜ 项目 ${meta.path}`;
-  return truncateLine(status, columns);
+  const suffix = errorMessage ? ` ｜ 刷新失败：${errorMessage}` : '';
+  return truncateLine(`${status}${suffix}`, columns);
 }
 
 function getPageSize(rows: number): number {
@@ -87,7 +94,8 @@ function render(state: MonitorState): void {
 
   if (state.tasks.length === 0) {
     const filler = Array.from({ length: pageSize }, () => '');
-    const status = truncateLine('等待后台任务启动…', columns);
+    const statusText = state.lastError ? `刷新失败：${state.lastError}` : '等待后台任务启动…';
+    const status = truncateLine(statusText, columns);
     const content = [header, ...filler, status].join('\n');
     process.stdout.write(`\u001b[2J\u001b[H${content}`);
     return;
@@ -108,7 +116,12 @@ function render(state: MonitorState): void {
     pageLines.push('');
   }
 
-  const status = buildStatus(current, { current: nextOffset + 1, total: Math.max(1, maxOffset + 1) }, columns);
+  const status = buildStatus(
+    current,
+    { current: nextOffset + 1, total: Math.max(1, maxOffset + 1) },
+    columns,
+    state.lastError
+  );
   const content = [header, ...pageLines, status].join('\n');
   process.stdout.write(`\u001b[2J\u001b[H${content}`);
 }
@@ -193,13 +206,16 @@ function handleInput(state: MonitorState, input: string): void {
 }
 
 function setupCleanup(cleanup: () => void): void {
-  const handler = (): void => {
+  const exitHandler = (): void => {
+    cleanup();
+  };
+  const signalHandler = (): void => {
     cleanup();
     process.exit(0);
   };
-  process.on('SIGINT', handler);
-  process.on('SIGTERM', handler);
-  process.on('exit', cleanup);
+  process.on('SIGINT', signalHandler);
+  process.on('SIGTERM', signalHandler);
+  process.on('exit', exitHandler);
 }
 
 /**
@@ -219,7 +235,10 @@ export async function runMonitor(): Promise<void> {
     stickToBottom: new Map()
   };
 
+  let cleaned = false;
   const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
       process.stdin.pause();
@@ -239,7 +258,12 @@ export async function runMonitor(): Promise<void> {
     refreshing = true;
     try {
       const tasks = await loadTasks(logsDir);
+      state.lastError = undefined;
       updateSelection(state, tasks);
+      render(state);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      state.lastError = message;
       render(state);
     } finally {
       refreshing = false;

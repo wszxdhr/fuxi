@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'fs-extra';
+import { pad2 } from './utils';
 
 export interface RunMetadata {
   readonly command: string;
@@ -27,10 +28,6 @@ export function getCurrentRegistryPath(): string {
 
 export async function ensureLogsDir(): Promise<void> {
   await fs.mkdirp(LOGS_DIR);
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, '0');
 }
 
 /**

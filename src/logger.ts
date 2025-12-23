@@ -1,4 +1,5 @@
 import fs from 'fs-extra';
+import { pad2 } from './utils';
 
 type Colorizer = (value: string) => string;
 type ConsoleMethodName = 'log' | 'warn' | 'error';
@@ -106,16 +107,12 @@ export class Logger {
 
   private formatTimestamp(date: Date): string {
     const year = date.getFullYear();
-    const month = this.pad2(date.getMonth() + 1);
-    const day = this.pad2(date.getDate());
-    const hours = this.pad2(date.getHours());
-    const minutes = this.pad2(date.getMinutes());
-    const seconds = this.pad2(date.getSeconds());
+    const month = pad2(date.getMonth() + 1);
+    const day = pad2(date.getDate());
+    const hours = pad2(date.getHours());
+    const minutes = pad2(date.getMinutes());
+    const seconds = pad2(date.getSeconds());
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-  }
-
-  private pad2(value: number): string {
-    return String(value).padStart(2, '0');
   }
 }
 

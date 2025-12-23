@@ -170,3 +170,10 @@ export async function readFileSafe(filePath: string): Promise<string> {
 export function formatHeading(title: string): string {
   return `## ${title}\n`;
 }
+
+/**
+ * 补齐两位数字字符串。
+ */
+export function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
