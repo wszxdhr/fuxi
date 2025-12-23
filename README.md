@@ -62,6 +62,10 @@ wheel-ai run --task "补充文档" --ai-cli "claude" --ai-args "--model" "claude
 - `memory/plan.md`：分阶段计划（可被 AI 重写保持最新）。
 - `memory/notes.md`：每轮迭代的输出、结论、风险与下一步。
 
+## 运行中任务监控
+- `wheel-ai monitor` 启动交互式监控，←/→ 切换任务，↑/↓ 翻页。
+- 在监控界面按 `t` 触发终止，会弹出确认框（y/n）。
+
 ## Webhook 通知
 可通过 `--webhook` 配置通知回调地址，系统会在任务开始、第 N 轮开始、任务结束时发送 POST JSON。
 

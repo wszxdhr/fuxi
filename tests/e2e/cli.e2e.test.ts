@@ -35,6 +35,7 @@ test('CLI monitor 帮助信息可正常输出', async () => {
   });
 
   assert.ok(stdout.includes('Usage: wheel-ai monitor'));
+  assert.ok(stdout.includes('t 终止任务'));
 });
 
 test('CLI monitor 在非 TTY 下输出提示', async () => {

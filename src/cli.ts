@@ -165,7 +165,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command('monitor')
-    .description('查看后台运行日志')
+    .description('查看后台运行日志（t 终止任务）')
     .action(async () => {
       await runMonitor();
     });

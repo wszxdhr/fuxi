@@ -8,6 +8,7 @@ export interface RunMetadata {
   readonly round: number;
   readonly tokenUsed: number;
   readonly path: string;
+  readonly pid?: number;
 }
 
 export interface CurrentRegistryEntry extends RunMetadata {

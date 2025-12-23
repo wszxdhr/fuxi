@@ -49,7 +49,8 @@ export async function createRunTracker(options: RunTrackerOptions): Promise<RunT
       command,
       round,
       tokenUsed,
-      path
+      path,
+      pid: process.pid
     };
     await safeWrite(logFile, metadata, logger);
   };
