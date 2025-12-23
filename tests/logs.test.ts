@@ -16,14 +16,14 @@ test('sanitizeBranchName 会替换非法字符', () => {
 test('buildAutoLogFilePath 会拼接日志目录与分支名', () => {
   const date = new Date(2025, 0, 1, 8, 0, 0);
   const filePath = buildAutoLogFilePath('feat/alpha', date);
-  const expected = path.join(getLogsDir(), 'fuxi-auto-log-20250101080000-feat-alpha.log');
+  const expected = path.join(getLogsDir(), 'hamster-wheel-cli-auto-log-20250101080000-feat-alpha.log');
   assert.equal(filePath, expected);
 });
 
 test('getLogMetaPath 使用同名 json', () => {
-  const logFile = path.join('/tmp', 'fuxi-auto-log-20250101140101-main.log');
+  const logFile = path.join('/tmp', 'hamster-wheel-cli-auto-log-20250101140101-main.log');
   const metaPath = getLogMetaPath(logFile);
-  const expected = path.join(getLogsDir(), 'fuxi-auto-log-20250101140101-main.json');
+  const expected = path.join(getLogsDir(), 'hamster-wheel-cli-auto-log-20250101140101-main.json');
   assert.equal(metaPath, expected);
 });
 

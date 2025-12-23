@@ -50,7 +50,7 @@ export async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
 
   program
-    .name('fuxi')
+    .name('hamster-wheel-cli')
     .description('基于 AI CLI 的持续迭代开发工具')
     .version('1.0.0');
 

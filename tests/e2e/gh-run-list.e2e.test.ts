@@ -7,7 +7,7 @@ import { listFailedRuns } from '../../src/gh';
 import { Logger } from '../../src/logger';
 
 test('listFailedRuns 可识别失败的 Actions 运行', async () => {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fuxi-gh-'));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'hamster-wheel-cli-gh-'));
   const ghPath = path.join(tempDir, 'gh');
   const output = [
     {

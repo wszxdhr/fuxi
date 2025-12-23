@@ -14,7 +14,7 @@ test('CLI 帮助信息可正常输出', async () => {
     }
   });
 
-  assert.ok(stdout.includes('Usage: fuxi run'));
+  assert.ok(stdout.includes('Usage: hamster-wheel-cli run'));
   assert.ok(!stdout.includes('--ai-env-file'));
   assert.ok(!stdout.includes('--ai-env'));
   assert.ok(stdout.includes('--log-file'));
@@ -32,7 +32,7 @@ test('CLI monitor 帮助信息可正常输出', async () => {
     }
   });
 
-  assert.ok(stdout.includes('Usage: fuxi monitor'));
+  assert.ok(stdout.includes('Usage: hamster-wheel-cli monitor'));
 });
 
 test('CLI monitor 在非 TTY 下输出提示', async () => {
