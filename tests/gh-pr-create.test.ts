@@ -44,7 +44,7 @@ test('buildPrCreateArgs 支持使用 body 文件', () => {
 
 test('isPrAlreadyExistsMessage 可识别已有 PR 提示', () => {
   assert.equal(
-    isPrAlreadyExistsMessage('a pull request for branch \"feat/demo\" into branch \"main\" already exists'),
+    isPrAlreadyExistsMessage('a pull request for branch "feat/demo" into branch "main" already exists'),
     true
   );
   assert.equal(isPrAlreadyExistsMessage('A PR already exists for branch feat/demo on branch main'), true);
