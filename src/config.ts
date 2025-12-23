@@ -28,6 +28,7 @@ export interface CliOptions {
   readonly reviewers?: string[];
   readonly stopSignal: string;
   readonly verbose: boolean;
+  readonly skipInstall: boolean;
 }
 
 function buildAiConfig(options: CliOptions): AiCliConfig {
@@ -87,7 +88,8 @@ export function buildLoopConfig(options: CliOptions, cwd: string): LoopConfig {
     runTests: options.runTests,
     runE2e: options.runE2e,
     autoCommit: options.autoCommit,
-    autoPush: options.autoPush
+    autoPush: options.autoPush,
+    skipInstall: options.skipInstall
   };
 }
 

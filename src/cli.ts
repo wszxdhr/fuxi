@@ -35,6 +35,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--branch <name>', 'worktree 分支名（默认自动生成或当前分支）')
     .option('--worktree-path <path>', 'worktree 路径，默认 ../worktrees/<branch>')
     .option('--base-branch <name>', '创建分支的基线分支', 'main')
+    .option('--skip-install', '跳过开始任务前的依赖检查', false)
     .option('--run-tests', '运行单元测试命令', false)
     .option('--run-e2e', '运行 e2e 测试命令', false)
     .option('--unit-command <cmd>', '单元测试命令', 'yarn test')
@@ -74,7 +75,8 @@ export async function runCli(argv: string[]): Promise<void> {
         draft: Boolean(options.draft),
         reviewers: (options.reviewer as string[]) ?? [],
         stopSignal: options.stopSignal as string,
-        verbose: Boolean(options.verbose)
+        verbose: Boolean(options.verbose),
+        skipInstall: Boolean(options.skipInstall)
       };
 
       const config = buildLoopConfig(cliOptions, process.cwd());

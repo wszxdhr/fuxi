@@ -72,6 +72,7 @@ export interface LoopConfig {
   readonly runE2e: boolean;
   readonly autoCommit: boolean;
   readonly autoPush: boolean;
+  readonly skipInstall: boolean;
 }
 
 export interface CommandOptions {
