@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildPrCreateArgs, resolvePrTitle } from '../src/gh';
+import { buildPrCreateArgs, isPrAlreadyExistsMessage, resolvePrTitle } from '../src/gh';
 import type { PrConfig } from '../src/types';
 
 test('resolvePrTitle 在未提供标题时生成默认标题', () => {
@@ -40,4 +40,11 @@ test('buildPrCreateArgs 支持使用 body 文件', () => {
   assert.ok(args.includes('--draft'));
   assert.ok(args.includes('--reviewer'));
   assert.ok(args.includes('alice,bob'));
+});
+
+test('isPrAlreadyExistsMessage 可识别已有 PR 提示', () => {
+  assert.equal(isPrAlreadyExistsMessage('pull request already exists'), true);
+  assert.equal(isPrAlreadyExistsMessage('A PR already exists for branch'), true);
+  assert.equal(isPrAlreadyExistsMessage('提示：已存在拉取请求'), true);
+  assert.equal(isPrAlreadyExistsMessage('some other error'), false);
 });

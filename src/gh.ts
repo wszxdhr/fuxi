@@ -110,6 +110,27 @@ export function buildPrCreateArgs(branch: string, config: PrConfig): string[] {
 }
 
 /**
+ * 判断 gh pr create 是否提示 PR 已存在。
+ */
+export function isPrAlreadyExistsMessage(output: string): boolean {
+  const trimmed = output.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (lower.includes('pull request already exists')) return true;
+  if (lower.includes('already exists') && /\bpr\b/i.test(trimmed)) return true;
+  if (trimmed.includes('已存在') && (trimmed.includes('拉取请求') || trimmed.includes('合并请求') || /\bpr\b/i.test(trimmed))) {
+    return true;
+  }
+  return false;
+}
+
+function extractPrUrl(output: string): string | null {
+  const match = output.match(/https?:\/\/\S+/);
+  if (!match) return null;
+  return match[0].replace(/[),.]+$/, '');
+}
+
+/**
  * 读取当前分支 PR 信息。
  */
 export async function viewPr(branch: string, cwd: string, logger: Logger): Promise<GhPrInfo | null> {
@@ -148,7 +169,24 @@ export async function createPr(branch: string, config: PrConfig, cwd: string, lo
     verboseCommand: `gh ${args.join(' ')}`
   });
   if (result.exitCode !== 0) {
-    logger.warn(`创建 PR 失败: ${result.stderr || result.stdout}`);
+    const output = `${result.stderr}\n${result.stdout}`.trim();
+    if (isPrAlreadyExistsMessage(output)) {
+      const existingPr = await viewPr(branch, cwd, logger);
+      if (existingPr) {
+        logger.warn(`创建 PR 失败，但检测到已有 PR，视为创建完成: ${existingPr.url}`);
+        return existingPr;
+      }
+      const fallbackUrl = extractPrUrl(output);
+      logger.warn('创建 PR 失败，提示已存在 PR，但读取 PR 信息失败，视为创建完成');
+      return {
+        number: 0,
+        url: fallbackUrl ?? '未获取到链接',
+        title: '已存在 PR（未获取详情）',
+        state: 'unknown',
+        headRefName: branch
+      };
+    }
+    logger.warn(`创建 PR 失败: ${output || '未知错误'}`);
     return null;
   }
 
