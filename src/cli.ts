@@ -4,6 +4,7 @@ import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, default
 import { applyShortcutArgv, loadGlobalConfig } from './global-config';
 import { generateBranchName, getCurrentBranch } from './git';
 import { buildAutoLogFilePath } from './logs';
+import { runLogsViewer } from './logs-viewer';
 import { runLoop } from './loop';
 import { defaultLogger } from './logger';
 import { runMonitor } from './monitor';
@@ -163,6 +164,13 @@ export async function runCli(argv: string[]): Promise<void> {
     .description('查看后台运行日志')
     .action(async () => {
       await runMonitor();
+    });
+
+  program
+    .command('logs')
+    .description('查看历史日志')
+    .action(async () => {
+      await runLogsViewer();
     });
 
   await program.parseAsync(effectiveArgv);

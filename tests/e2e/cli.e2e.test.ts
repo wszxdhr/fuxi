@@ -47,3 +47,29 @@ test('CLI monitor 在非 TTY 下输出提示', async () => {
 
   assert.ok(stdout.includes('当前终端不支持交互式 monitor。'));
 });
+
+test('CLI logs 帮助信息可正常输出', async () => {
+  const execFileAsync = promisify(execFile);
+  const cliPath = path.join(process.cwd(), 'src', 'cli.ts');
+  const { stdout } = await execFileAsync('node', ['--require', 'ts-node/register', cliPath, 'logs', '--help'], {
+    env: {
+      ...process.env,
+      FORCE_COLOR: '0'
+    }
+  });
+
+  assert.ok(stdout.includes('Usage: fuxi logs'));
+});
+
+test('CLI logs 在非 TTY 下输出提示', async () => {
+  const execFileAsync = promisify(execFile);
+  const cliPath = path.join(process.cwd(), 'src', 'cli.ts');
+  const { stdout } = await execFileAsync('node', ['--require', 'ts-node/register', cliPath, 'logs'], {
+    env: {
+      ...process.env,
+      FORCE_COLOR: '0'
+    }
+  });
+
+  assert.ok(stdout.includes('当前终端不支持交互式 logs。'));
+});
