@@ -18,7 +18,7 @@
     "dev": "ts-node src/cli.ts",
     "start": "node dist/cli.js",
     "test": "node --test --require ts-node/register tests/*.test.ts",
-    "e2e": "node --test --require ts-node/register tests/e2e/**/*.ts"
+    "e2e": "node --test --test-concurrency=1 --require ts-node/register tests/e2e/**/*.ts"
   },
   "dependencies": {
     "commander": "^14.0.2",
