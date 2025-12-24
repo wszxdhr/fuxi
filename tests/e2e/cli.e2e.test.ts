@@ -116,17 +116,17 @@ test('CLI agent list 输出配置内容', async () => {
   assert.ok(stdout.includes('claude: claude --model sonnet'));
 });
 
-test('CLI set alias 帮助信息可正常输出', async () => {
+test('CLI alias set 帮助信息可正常输出', async () => {
   const execFileAsync = promisify(execFile);
   const cliPath = path.join(process.cwd(), 'src', 'cli.ts');
-  const { stdout } = await execFileAsync('node', ['--require', 'ts-node/register', cliPath, 'set', 'alias', '--help'], {
+  const { stdout } = await execFileAsync('node', ['--require', 'ts-node/register', cliPath, 'alias', 'set', '--help'], {
     env: {
       ...process.env,
       FORCE_COLOR: '0'
     }
   });
 
-  assert.ok(stdout.includes('Usage: wheel-ai set alias'));
+  assert.ok(stdout.includes('Usage: wheel-ai alias set'));
 });
 
 test('CLI alias 帮助信息可正常输出', async () => {

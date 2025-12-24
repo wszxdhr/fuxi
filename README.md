@@ -27,6 +27,7 @@ node dist/cli.js run \
 ```
 - `-t, --task`：任务描述，可重复传入多个任务，默认按接力模式依次执行。
 - `--ai-cli`/`--ai-args`：指向系统已有的 AI CLI，提示文本通过 stdin（或 `--ai-prompt-arg`）传入。
+- `--use-alias`/`--use-agent`：叠加 alias/agent 配置参数，重复传入时按命令行顺序覆盖。
 - `--worktree`：在独立分支 worktree 中作业；基线分支通过 `--base-branch` 指定。
 - 使用 `--worktree` 创建的临时工作目录，在确认分支已提交、推送且存在 PR 后会自动清理（仅删除本次创建的 worktree）。
 - `--run-tests`/`--run-e2e`：运行测试命令（默认 `yarn test`、`yarn e2e`）。
@@ -63,31 +64,30 @@ wheel-ai run --task "补充文档" --ai-cli "claude" --ai-args "--model" "claude
 - 仅支持一个 `[shortcut]`，且 `name` 不能包含空白字符。
 - 配置文件不存在或内容不合法会被忽略，不影响正常使用。
 
-## alias 浏览
-可在 `~/.wheel-ai/config.toml` 中维护多个 alias，便于集中查看常用命令组合：
+## alias 管理与使用
+可在 `~/.wheel-ai/config.toml` 中维护多个 alias，便于复用常用参数组合：
 
 ```toml
 [alias]
-daily = "--task \"补充文档\" --ai-cli \"claude\""
-weekly = "run --task \"补充测试\" --run-tests"
+daily = "--task \"补充文档\" --run-tests"
+weekly = "--task \"补充测试\" --run-tests --run-e2e"
 ```
 
-运行 `wheel-ai alias` 进入交互式列表：
-- ↑/↓ 选择 alias
-- 底部会显示选中的命令内容
-- alias 名称不能包含空白字符
-
-也可以使用命令行直接写入 alias：
+命令示例：
 ```bash
-wheel-ai set alias daily --task "补充文档" --run-tests
+wheel-ai alias set daily --task "补充文档" --run-tests
+wheel-ai alias list
+wheel-ai alias delete daily
 ```
 
-也可以直接执行 alias，并在末尾追加命令：
+在 run 中叠加 alias：
 ```bash
-wheel-ai alias run daily --run-e2e --task "补充 e2e"
+wheel-ai run --use-alias daily --use-alias weekly -t "balabala"
 ```
-- `<addition...>` 支持多个命令/参数组合，等价于将追加内容放在 alias 命令末尾。
-- 当追加的命令/参数与 alias 内已有内容重复时，以追加的为准。
+
+- alias 名称不能为空且不能包含空白字符。
+- `--use-alias` 可重复传入，按出现顺序叠加参数。
+- 当出现同名选项时，后出现的 alias 覆盖前面的。
 
 ## agent 配置
 可在 `~/.wheel-ai/config.toml` 中维护多个 AI CLI 命令，便于复用：
@@ -105,6 +105,13 @@ wheel-ai agent set openai openai --model gpt-4o
 wheel-ai agent delete claude
 wheel-ai agent list
 ```
+
+在 run 中使用 agent：
+```bash
+wheel-ai run --use-agent claude -t "补充文档"
+```
+
+- `--use-agent` 会叠加 agent 配置的参数，冲突时按命令行出现顺序覆盖。
 
 - `add` 仅新增，已存在会报错。
 - `set` 新增或覆盖。

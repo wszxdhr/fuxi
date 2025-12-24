@@ -11,10 +11,12 @@ import {
   parseAliasEntries,
   parseAgentEntries,
   splitCommandArgs,
+  removeAliasEntry,
   removeAgentEntry,
   upsertAgentEntry,
   upsertAliasEntry
 } from './global-config';
+import type { AgentEntry, AliasEntry } from './global-config';
 import { getCurrentBranch } from './git';
 import { buildAutoLogFilePath, formatCommandLine } from './logs';
 import { runAliasViewer } from './alias-viewer';
@@ -81,6 +83,9 @@ const RUN_OPTION_FLAG_MAP = new Map<string, RunOptionSpec>(
   RUN_OPTION_SPECS.flatMap(spec => spec.flags.map(flag => [flag, spec] as const))
 );
 
+const USE_ALIAS_FLAG = '--use-alias';
+const USE_AGENT_FLAG = '--use-agent';
+
 function parseInteger(value: string, defaultValue: number): number {
   const parsed = Number.parseInt(value, 10);
   if (Number.isNaN(parsed)) return defaultValue;
@@ -115,7 +120,12 @@ function buildBackgroundArgs(argv: string[], logFile: string, branchName?: strin
 
 function extractAliasCommandArgs(argv: string[], name: string): string[] {
   const args = argv.slice(2);
-  const start = args.findIndex((arg, index) => arg === 'set' && args[index + 1] === 'alias' && args[index + 2] === name);
+  const start = args.findIndex((arg, index) => {
+    const legacyMatch = arg === 'set' && args[index + 1] === 'alias' && args[index + 2] === name;
+    const aliasMatch =
+      isAliasCommandToken(arg) && args[index + 1] === 'set' && args[index + 2] === name;
+    return legacyMatch || aliasMatch;
+  });
   if (start < 0) return [];
   const rest = args.slice(start + 3);
   if (rest[0] === '--') return rest.slice(1);
@@ -148,7 +158,7 @@ function extractAliasRunArgs(argv: string[], name: string): string[] {
   return rest;
 }
 
-function normalizeAliasCommandArgs(args: string[]): string[] {
+function normalizeRunCommandArgs(args: string[]): string[] {
   let start = 0;
   if (args[start] === 'wheel-ai') {
     start += 1;
@@ -228,19 +238,166 @@ function parseArgSegments(tokens: string[]): ParsedArgSegment[] {
   return segments;
 }
 
-function mergeAliasCommandArgs(aliasTokens: string[], additionTokens: string[]): string[] {
-  const aliasSegments = parseArgSegments(aliasTokens);
+// 按选项名合并 run 参数，同名选项以“后出现覆盖前出现”为准。
+function mergeRunCommandArgs(baseTokens: string[], additionTokens: string[]): string[] {
+  const baseSegments = parseArgSegments(baseTokens);
   const additionSegments = parseArgSegments(additionTokens);
   const overrideNames = new Set(
     additionSegments.flatMap(segment => (segment.name ? [segment.name] : []))
   );
 
   const merged = [
-    ...aliasSegments.filter(segment => !segment.name || !overrideNames.has(segment.name)),
+    ...baseSegments.filter(segment => !segment.name || !overrideNames.has(segment.name)),
     ...additionSegments
   ];
 
   return merged.flatMap(segment => segment.tokens);
+}
+
+interface ExpandedRunTokens {
+  readonly tokens: string[];
+  readonly expanded: boolean;
+}
+
+interface UseOptionMatch {
+  readonly type: 'alias' | 'agent';
+  readonly name: string;
+  readonly nextIndex: number;
+}
+
+function extractRunCommandArgs(argv: string[]): string[] {
+  const args = argv.slice(2);
+  const start = args.findIndex(arg => arg === 'run');
+  if (start < 0) return [];
+  return args.slice(start + 1);
+}
+
+function parseUseOptionToken(token: string, flag: string): { matched: boolean; value?: string } {
+  if (token === flag) {
+    return { matched: true };
+  }
+  if (token.startsWith(`${flag}=`)) {
+    return { matched: true, value: token.slice(flag.length + 1) };
+  }
+  return { matched: false };
+}
+
+function resolveUseOption(tokens: string[], index: number): UseOptionMatch | null {
+  const token = tokens[index];
+  const aliasMatch = parseUseOptionToken(token, USE_ALIAS_FLAG);
+  if (aliasMatch.matched) {
+    const value = aliasMatch.value ?? tokens[index + 1];
+    if (!value) {
+      throw new Error(`${USE_ALIAS_FLAG} 需要提供名称`);
+    }
+    const nextIndex = aliasMatch.value ? index + 1 : index + 2;
+    return { type: 'alias', name: value, nextIndex };
+  }
+
+  const agentMatch = parseUseOptionToken(token, USE_AGENT_FLAG);
+  if (agentMatch.matched) {
+    const value = agentMatch.value ?? tokens[index + 1];
+    if (!value) {
+      throw new Error(`${USE_AGENT_FLAG} 需要提供名称`);
+    }
+    const nextIndex = agentMatch.value ? index + 1 : index + 2;
+    return { type: 'agent', name: value, nextIndex };
+  }
+
+  return null;
+}
+
+function buildAliasRunArgs(entry: AliasEntry): string[] {
+  return normalizeRunCommandArgs(splitCommandArgs(entry.command));
+}
+
+function buildAgentRunArgs(entry: AgentEntry): string[] {
+  const tokens = normalizeRunCommandArgs(splitCommandArgs(entry.command));
+  if (tokens.length === 0) return [];
+  if (tokens[0].startsWith('-')) {
+    return tokens;
+  }
+  const [command, ...args] = tokens;
+  if (args.length === 0) {
+    return ['--ai-cli', command];
+  }
+  return ['--ai-cli', command, '--ai-args', ...args];
+}
+
+function expandRunTokens(
+  tokens: string[],
+  lookup: { aliasEntries: Map<string, AliasEntry>; agentEntries: Map<string, AgentEntry> },
+  stack: { alias: Set<string>; agent: Set<string> }
+): ExpandedRunTokens {
+  let mergedTokens: string[] = [];
+  let buffer: string[] = [];
+  let expanded = false;
+  let index = 0;
+
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token === '--') {
+      buffer.push(...tokens.slice(index));
+      break;
+    }
+
+    const match = resolveUseOption(tokens, index);
+    if (!match) {
+      buffer.push(token);
+      index += 1;
+      continue;
+    }
+
+    if (buffer.length > 0) {
+      mergedTokens = mergeRunCommandArgs(mergedTokens, buffer);
+      buffer = [];
+    }
+
+    expanded = true;
+
+    if (match.type === 'alias') {
+      const normalized = normalizeAliasName(match.name);
+      if (!normalized) {
+        throw new Error('alias 名称不能为空且不能包含空白字符');
+      }
+      if (stack.alias.has(normalized)) {
+        throw new Error(`alias 循环引用：${normalized}`);
+      }
+      const entry = lookup.aliasEntries.get(normalized);
+      if (!entry) {
+        throw new Error(`未找到 alias：${normalized}`);
+      }
+      stack.alias.add(normalized);
+      const resolved = expandRunTokens(buildAliasRunArgs(entry), lookup, stack);
+      stack.alias.delete(normalized);
+      mergedTokens = mergeRunCommandArgs(mergedTokens, resolved.tokens);
+      index = match.nextIndex;
+      continue;
+    }
+
+    const normalized = normalizeAgentName(match.name);
+    if (!normalized) {
+      throw new Error('agent 名称不能为空且不能包含空白字符');
+    }
+    if (stack.agent.has(normalized)) {
+      throw new Error(`agent 循环引用：${normalized}`);
+    }
+    const entry = lookup.agentEntries.get(normalized);
+    if (!entry) {
+      throw new Error(`未找到 agent：${normalized}`);
+    }
+    stack.agent.add(normalized);
+    const resolved = expandRunTokens(buildAgentRunArgs(entry), lookup, stack);
+    stack.agent.delete(normalized);
+    mergedTokens = mergeRunCommandArgs(mergedTokens, resolved.tokens);
+    index = match.nextIndex;
+  }
+
+  if (buffer.length > 0) {
+    mergedTokens = mergeRunCommandArgs(mergedTokens, buffer);
+  }
+
+  return { tokens: mergedTokens, expanded };
 }
 
 async function runForegroundWithDetach(options: {
@@ -350,12 +507,14 @@ export async function runCli(argv: string[]): Promise<void> {
     .version('0.2.1');
   program.addHelpText(
     'after',
-    '\n别名执行：\n  wheel-ai alias run <alias> <addition...>\n  追加命令与 alias 重叠时，以追加为准。\n'
+    '\nalias 管理：\n  wheel-ai alias set <name> <options...>\n  wheel-ai alias list\n  wheel-ai alias delete <name>\n\nalias/agent 叠加：\n  wheel-ai run --use-alias <name> [--use-alias <name>...]\n  wheel-ai run --use-agent <name> [--use-agent <name>...]\n  同名选项按出现顺序覆盖。\n'
   );
 
   program
     .command('run')
     .option('-t, --task <task>', '需要完成的任务描述（可重复传入，独立处理）', collect, [])
+    .option('--use-alias <name>', '叠加 alias 配置（可重复）', collect, [])
+    .option('--use-agent <name>', '叠加 agent 配置（可重复）', collect, [])
     .option('-i, --iterations <number>', '最大迭代次数', value => parseInteger(value, 5), 5)
     .option('--ai-cli <command>', 'AI CLI 命令', 'claude')
     .option('--ai-args <args...>', 'AI CLI 参数', [])
@@ -389,6 +548,46 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('-v, --verbose', '输出调试日志', false)
     .option('--skip-quality', '跳过代码质量检查', false)
     .action(async (options) => {
+      const rawRunArgs = extractRunCommandArgs(effectiveArgv);
+      const hasUseOptions = rawRunArgs.some(
+        token =>
+          token === USE_ALIAS_FLAG ||
+          token.startsWith(`${USE_ALIAS_FLAG}=`) ||
+          token === USE_AGENT_FLAG ||
+          token.startsWith(`${USE_AGENT_FLAG}=`)
+      );
+
+      if (hasUseOptions) {
+        const filePath = getGlobalConfigPath();
+        const exists = await fs.pathExists(filePath);
+        const content = exists ? await fs.readFile(filePath, 'utf8') : '';
+        const aliasEntries = parseAliasEntries(content);
+        const agentEntries = parseAgentEntries(content);
+        const resolved = expandRunTokens(
+          rawRunArgs,
+          {
+            aliasEntries: new Map(aliasEntries.map(entry => [entry.name, entry])),
+            agentEntries: new Map(agentEntries.map(entry => [entry.name, entry]))
+          },
+          {
+            alias: new Set<string>(),
+            agent: new Set<string>()
+          }
+        );
+
+        if (resolved.expanded) {
+          const nextArgv = [process.argv[0], process.argv[1], 'run', ...resolved.tokens];
+          const originalArgv = process.argv;
+          process.argv = nextArgv;
+          try {
+            await runCli(nextArgv);
+          } finally {
+            process.argv = originalArgv;
+          }
+          return;
+        }
+      }
+
       const tasks = normalizeTaskList(options.task as string[] | string | undefined);
       if (tasks.length === 0) {
         throw new Error('需要至少提供一个任务描述');
@@ -673,12 +872,16 @@ export async function runCli(argv: string[]): Promise<void> {
     agentCommand.help();
   });
 
-  program
-    .command('set')
-    .description('写入全局配置')
-    .command('alias <name> [options...]')
-    .description('设置 alias')
+  const aliasCommand = program
+    .command('alias')
+    .alias('aliases')
+    .description('管理全局 alias 配置');
+
+  aliasCommand
+    .command('set <name> [options...]')
+    .description('写入 alias')
     .allowUnknownOption(true)
+    .allowExcessArguments(true)
     .action(async (name: string) => {
       const normalized = normalizeAliasName(name);
       if (!normalized) {
@@ -693,10 +896,50 @@ export async function runCli(argv: string[]): Promise<void> {
       console.log(`已写入 alias：${normalized}`);
     });
 
-  const aliasCommand = program
-    .command('alias')
-    .alias('aliases')
-    .description('浏览全局 alias 配置（alias run 可执行并追加命令）');
+  aliasCommand
+    .command('list')
+    .description('列出 alias 配置')
+    .action(async () => {
+      const filePath = getGlobalConfigPath();
+      const exists = await fs.pathExists(filePath);
+      if (!exists) {
+        console.log('未发现 alias 配置');
+        return;
+      }
+
+      const content = await fs.readFile(filePath, 'utf8');
+      const entries = parseAliasEntries(content).filter(entry => entry.source === 'alias');
+      if (entries.length === 0) {
+        console.log('未发现 alias 配置');
+        return;
+      }
+
+      entries.forEach(entry => {
+        console.log(`${entry.name}: ${entry.command}`);
+      });
+    });
+
+  aliasCommand
+    .command('delete <name>')
+    .description('删除 alias')
+    .action(async (name: string) => {
+      const normalized = normalizeAliasName(name);
+      if (!normalized) {
+        throw new Error('alias 名称不能为空且不能包含空白字符');
+      }
+
+      const filePath = getGlobalConfigPath();
+      const exists = await fs.pathExists(filePath);
+      if (!exists) {
+        throw new Error(`未找到 alias 配置文件：${filePath}`);
+      }
+
+      const removed = await removeAliasEntry(normalized);
+      if (!removed) {
+        throw new Error(`未找到 alias：${normalized}`);
+      }
+      console.log(`已删除 alias：${normalized}`);
+    });
 
   aliasCommand
     .command('run <name> [addition...]')
@@ -722,9 +965,9 @@ export async function runCli(argv: string[]): Promise<void> {
         throw new Error(`未找到 alias：${normalized}`);
       }
 
-      const aliasTokens = normalizeAliasCommandArgs(splitCommandArgs(entry.command));
+      const aliasTokens = normalizeRunCommandArgs(splitCommandArgs(entry.command));
       const additionTokens = extractAliasRunArgs(effectiveArgv, normalized);
-      const mergedTokens = mergeAliasCommandArgs(aliasTokens, additionTokens);
+      const mergedTokens = mergeRunCommandArgs(aliasTokens, additionTokens);
       if (mergedTokens.length === 0) {
         throw new Error('alias 命令不能为空');
       }

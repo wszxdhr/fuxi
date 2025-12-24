@@ -287,6 +287,43 @@ export function updateAliasContent(content: string, name: string, command: strin
 }
 
 /**
+ * 删除 alias 配置内容，返回删除结果与新文本。
+ */
+export function removeAliasContent(content: string, name: string): { removed: boolean; nextContent: string } {
+  const lines = content.split(/\r?\n/);
+  let currentSection: string | null = null;
+  const removeIndices: number[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const sectionMatch = /^\s*\[(.+?)\]\s*$/.exec(lines[i]);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim();
+      continue;
+    }
+
+    if (currentSection !== 'alias') continue;
+    const parsed = parseTomlKeyValue(stripTomlComment(lines[i]).trim());
+    if (!parsed) continue;
+    if (parsed.key === name) {
+      removeIndices.push(i);
+    }
+  }
+
+  if (removeIndices.length === 0) {
+    return { removed: false, nextContent: ensureTrailingNewline(content) };
+  }
+
+  removeIndices
+    .sort((a, b) => b - a)
+    .forEach(index => {
+      lines.splice(index, 1);
+    });
+
+  const output = lines.join('\n');
+  return { removed: true, nextContent: output.endsWith('\n') ? output : `${output}\n` };
+}
+
+/**
  * 写入或更新 alias 配置。
  */
 export async function upsertAliasEntry(name: string, command: string, filePath: string = getGlobalConfigPath()): Promise<void> {
@@ -295,6 +332,19 @@ export async function upsertAliasEntry(name: string, command: string, filePath: 
   const nextContent = updateAliasContent(content, name, command);
   await fs.mkdirp(path.dirname(filePath));
   await fs.writeFile(filePath, nextContent, 'utf8');
+}
+
+/**
+ * 删除 alias 配置，返回是否删除成功。
+ */
+export async function removeAliasEntry(name: string, filePath: string = getGlobalConfigPath()): Promise<boolean> {
+  const exists = await fs.pathExists(filePath);
+  if (!exists) return false;
+  const content = await fs.readFile(filePath, 'utf8');
+  const { removed, nextContent } = removeAliasContent(content, name);
+  if (!removed) return false;
+  await fs.writeFile(filePath, nextContent, 'utf8');
+  return true;
 }
 
 function ensureTrailingNewline(content: string): string {

@@ -2,6 +2,17 @@
 
 本项目遵循语义化版本，变更日志以时间倒序记录。
 
+## [0.3.0] - 2025-12-24
+### Added
+- 新增 `alias set/list/delete` 命令，用于管理全局 alias 配置。
+- `run` 支持多次 `--use-alias` 叠加，并按命令行顺序覆盖同名选项。
+- `run` 新增 `--use-agent`，支持叠加 agent 配置并参与覆盖合并。
+
+### Changed
+- alias 管理方式调整为 `alias set/list/delete`，便于显式维护与查看。
+- alias 列表仅展示 `[alias]` 段，避免与 shortcut 混淆。
+- run 参数合并规则统一为“同名选项后出现覆盖前出现”。
+
 ## [0.2.1] - 2025-12-24
 ### Added
 - webhook payload 新增 `project` 字段，值为当前工作目录名称（仅文件夹名）。
