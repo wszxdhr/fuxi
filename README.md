@@ -89,6 +89,29 @@ wheel-ai alias run daily --run-e2e --task "补充 e2e"
 - `<addition...>` 支持多个命令/参数组合，等价于将追加内容放在 alias 命令末尾。
 - 当追加的命令/参数与 alias 内已有内容重复时，以追加的为准。
 
+## agent 配置
+可在 `~/.wheel-ai/config.toml` 中维护多个 AI CLI 命令，便于复用：
+
+```toml
+[agent]
+claude = "claude --model sonnet"
+openai = "openai --model gpt-4o"
+```
+
+命令示例：
+```bash
+wheel-ai agent add claude claude --model sonnet
+wheel-ai agent set openai openai --model gpt-4o
+wheel-ai agent delete claude
+wheel-ai agent list
+```
+
+- `add` 仅新增，已存在会报错。
+- `set` 新增或覆盖。
+- `delete` 删除指定 agent。
+- `list` 输出全部 agent 配置。
+- agent 名称不能为空且不能包含空白字符。
+
 ## 持久化记忆
 - `docs/ai-workflow.md`：AI 执行前的工作流基线，需作为提示前置输入。
 - `memory/plan.md`：分阶段计划（可被 AI 重写保持最新）。

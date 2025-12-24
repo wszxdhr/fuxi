@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
@@ -76,6 +78,42 @@ test('CLI logs 在非 TTY 下输出提示', async () => {
   });
 
   assert.ok(stdout.includes('当前终端不支持交互式 logs。'));
+});
+
+test('CLI agent 帮助信息可正常输出', async () => {
+  const execFileAsync = promisify(execFile);
+  const cliPath = path.join(process.cwd(), 'src', 'cli.ts');
+  const { stdout } = await execFileAsync('node', ['--require', 'ts-node/register', cliPath, 'agent', '--help'], {
+    env: {
+      ...process.env,
+      FORCE_COLOR: '0'
+    }
+  });
+
+  assert.ok(stdout.includes('Usage: wheel-ai agent'));
+});
+
+test('CLI agent list 输出配置内容', async () => {
+  const execFileAsync = promisify(execFile);
+  const cliPath = path.join(process.cwd(), 'src', 'cli.ts');
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wheel-ai-agent-'));
+  const configDir = path.join(homeDir, '.wheel-ai');
+  await fs.mkdir(configDir, { recursive: true });
+  await fs.writeFile(
+    path.join(configDir, 'config.toml'),
+    `[agent]\nclaude = "claude --model sonnet"\n`,
+    'utf8'
+  );
+
+  const { stdout } = await execFileAsync('node', ['--require', 'ts-node/register', cliPath, 'agent', 'list'], {
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      FORCE_COLOR: '0'
+    }
+  });
+
+  assert.ok(stdout.includes('claude: claude --model sonnet'));
 });
 
 test('CLI set alias 帮助信息可正常输出', async () => {

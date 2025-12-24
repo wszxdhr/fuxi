@@ -7,8 +7,12 @@ import {
   getGlobalConfigPath,
   loadGlobalConfig,
   normalizeAliasName,
+  normalizeAgentName,
   parseAliasEntries,
+  parseAgentEntries,
   splitCommandArgs,
+  removeAgentEntry,
+  upsertAgentEntry,
   upsertAliasEntry
 } from './global-config';
 import { getCurrentBranch } from './git';
@@ -112,6 +116,17 @@ function buildBackgroundArgs(argv: string[], logFile: string, branchName?: strin
 function extractAliasCommandArgs(argv: string[], name: string): string[] {
   const args = argv.slice(2);
   const start = args.findIndex((arg, index) => arg === 'set' && args[index + 1] === 'alias' && args[index + 2] === name);
+  if (start < 0) return [];
+  const rest = args.slice(start + 3);
+  if (rest[0] === '--') return rest.slice(1);
+  return rest;
+}
+
+function extractAgentCommandArgs(argv: string[], action: 'add' | 'set', name: string): string[] {
+  const args = argv.slice(2);
+  const start = args.findIndex(
+    (arg, index) => arg === 'agent' && args[index + 1] === action && args[index + 2] === name
+  );
   if (start < 0) return [];
   const rest = args.slice(start + 3);
   if (rest[0] === '--') return rest.slice(1);
@@ -557,6 +572,106 @@ export async function runCli(argv: string[]): Promise<void> {
     .action(async () => {
       await runLogsViewer();
     });
+
+  const agentCommand = program
+    .command('agent')
+    .description('管理 AI CLI agent 配置');
+
+  agentCommand
+    .command('add <name> [command...]')
+    .description('新增 agent')
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (name: string) => {
+      const normalized = normalizeAgentName(name);
+      if (!normalized) {
+        throw new Error('agent 名称不能为空且不能包含空白字符');
+      }
+      const commandArgs = extractAgentCommandArgs(effectiveArgv, 'add', name);
+      const commandLine = formatCommandLine(commandArgs);
+      if (!commandLine) {
+        throw new Error('agent 命令不能为空');
+      }
+
+      const filePath = getGlobalConfigPath();
+      const exists = await fs.pathExists(filePath);
+      const content = exists ? await fs.readFile(filePath, 'utf8') : '';
+      const entries = parseAgentEntries(content);
+      if (entries.some(entry => entry.name === normalized)) {
+        throw new Error(`agent 已存在：${normalized}`);
+      }
+
+      await upsertAgentEntry(normalized, commandLine);
+      console.log(`已新增 agent：${normalized}`);
+    });
+
+  agentCommand
+    .command('set <name> [command...]')
+    .description('写入 agent')
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (name: string) => {
+      const normalized = normalizeAgentName(name);
+      if (!normalized) {
+        throw new Error('agent 名称不能为空且不能包含空白字符');
+      }
+      const commandArgs = extractAgentCommandArgs(effectiveArgv, 'set', name);
+      const commandLine = formatCommandLine(commandArgs);
+      if (!commandLine) {
+        throw new Error('agent 命令不能为空');
+      }
+      await upsertAgentEntry(normalized, commandLine);
+      console.log(`已写入 agent：${normalized}`);
+    });
+
+  agentCommand
+    .command('delete <name>')
+    .description('删除 agent')
+    .action(async (name: string) => {
+      const normalized = normalizeAgentName(name);
+      if (!normalized) {
+        throw new Error('agent 名称不能为空且不能包含空白字符');
+      }
+
+      const filePath = getGlobalConfigPath();
+      const exists = await fs.pathExists(filePath);
+      if (!exists) {
+        throw new Error(`未找到 agent 配置文件：${filePath}`);
+      }
+
+      const removed = await removeAgentEntry(normalized);
+      if (!removed) {
+        throw new Error(`未找到 agent：${normalized}`);
+      }
+      console.log(`已删除 agent：${normalized}`);
+    });
+
+  agentCommand
+    .command('list')
+    .description('列出 agent 配置')
+    .action(async () => {
+      const filePath = getGlobalConfigPath();
+      const exists = await fs.pathExists(filePath);
+      if (!exists) {
+        console.log('未发现 agent 配置');
+        return;
+      }
+
+      const content = await fs.readFile(filePath, 'utf8');
+      const entries = parseAgentEntries(content);
+      if (entries.length === 0) {
+        console.log('未发现 agent 配置');
+        return;
+      }
+
+      entries.forEach(entry => {
+        console.log(`${entry.name}: ${entry.command}`);
+      });
+    });
+
+  agentCommand.action(() => {
+    agentCommand.help();
+  });
 
   program
     .command('set')
