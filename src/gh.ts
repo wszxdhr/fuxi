@@ -226,3 +226,23 @@ export async function listFailedRuns(branch: string, cwd: string, logger: Logger
     return [];
   }
 }
+
+/**
+ * 启用 PR 自动合并。
+ */
+export async function enableAutoMerge(target: string | number, cwd: string, logger: Logger): Promise<boolean> {
+  const targetValue = String(target);
+  const args = ['pr', 'merge', targetValue, '--auto', '--merge'];
+  const result = await runCommand('gh', args, {
+    cwd,
+    logger,
+    verboseLabel: 'gh',
+    verboseCommand: `gh ${args.join(' ')}`
+  });
+  if (result.exitCode !== 0) {
+    logger.warn(`启用自动合并失败: ${result.stderr || result.stdout}`);
+    return false;
+  }
+  logger.success('已启用 PR 自动合并');
+  return true;
+}

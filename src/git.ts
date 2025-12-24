@@ -209,7 +209,7 @@ function buildCommitArgs(message: CommitMessage): string[] {
 /**
  * 提交当前变更。
  */
-export async function commitAll(message: CommitMessage, cwd: string, logger: Logger): Promise<void> {
+export async function commitAll(message: CommitMessage, cwd: string, logger: Logger): Promise<boolean> {
   const add = await runCommand('git', ['add', '-A'], {
     cwd,
     logger,
@@ -227,9 +227,10 @@ export async function commitAll(message: CommitMessage, cwd: string, logger: Log
   });
   if (commit.exitCode !== 0) {
     logger.warn(`git commit 跳过或失败: ${commit.stderr}`);
-    return;
+    return false;
   }
   logger.success('已提交当前变更');
+  return true;
 }
 
 /**
@@ -282,4 +283,38 @@ export function generateBranchName(): string {
   const now = new Date();
   const stamp = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}-${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
   return `wheel-ai/${stamp}`;
+}
+
+function guessBranchType(task: string): string {
+  const text = task.toLowerCase();
+  if (/fix|bug|修复|错误|异常|问题/.test(text)) return 'fix';
+  if (/docs|readme|changelog|文档/.test(text)) return 'docs';
+  if (/test|e2e|单测|测试/.test(text)) return 'test';
+  if (/refactor|重构/.test(text)) return 'refactor';
+  if (/chore|构建|依赖|配置/.test(text)) return 'chore';
+  return 'feat';
+}
+
+function slugifyTask(task: string): string {
+  const slug = task
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug.slice(0, 40);
+}
+
+function buildTimestampSlug(now: Date): string {
+  const stamp = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}-${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
+  return `auto-${stamp}`;
+}
+
+/**
+ * 基于任务生成分支名（AI 失败时兜底）。
+ */
+export function generateBranchNameFromTask(task: string, now: Date = new Date()): string {
+  const slug = slugifyTask(task);
+  const type = guessBranchType(task);
+  const suffix = slug || buildTimestampSlug(now);
+  return `${type}/${suffix}`;
 }

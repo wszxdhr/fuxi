@@ -29,12 +29,14 @@ export interface CliOptions {
   readonly prBody?: string;
   readonly draft: boolean;
   readonly reviewers?: string[];
+  readonly autoMerge: boolean;
   readonly webhookUrls: string[];
   readonly webhookTimeout?: number;
   readonly stopSignal: string;
   readonly logFile?: string;
   readonly verbose: boolean;
   readonly skipInstall: boolean;
+  readonly skipQuality: boolean;
 }
 
 function buildAiConfig(options: CliOptions): AiCliConfig {
@@ -67,7 +69,8 @@ function buildPrConfig(options: CliOptions): PrConfig {
     title: options.prTitle,
     bodyPath: options.prBody,
     draft: options.draft,
-    reviewers: options.reviewers
+    reviewers: options.reviewers,
+    autoMerge: options.autoMerge
   };
 }
 
@@ -108,7 +111,8 @@ export function buildLoopConfig(options: CliOptions, cwd: string): LoopConfig {
     runE2e: options.runE2e,
     autoCommit: options.autoCommit,
     autoPush: options.autoPush,
-    skipInstall: options.skipInstall
+    skipInstall: options.skipInstall,
+    skipQuality: options.skipQuality
   };
 }
 

@@ -3,7 +3,7 @@ import fs from 'fs-extra';
 import { Command } from 'commander';
 import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, defaultWorkflowDoc } from './config';
 import { applyShortcutArgv, loadGlobalConfig, normalizeAliasName, upsertAliasEntry } from './global-config';
-import { generateBranchName, getCurrentBranch } from './git';
+import { getCurrentBranch } from './git';
 import { buildAutoLogFilePath, formatCommandLine } from './logs';
 import { runAliasViewer } from './alias-viewer';
 import { runLogsViewer } from './logs-viewer';
@@ -189,6 +189,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--pr-body <path>', 'PR 描述文件路径（可留空自动生成）')
     .option('--draft', '以草稿形式创建 PR', false)
     .option('--reviewer <user...>', 'PR reviewers', collect, [])
+    .option('--auto-merge', 'PR 检查通过后自动合并', false)
     .option('--webhook <url>', 'webhook 通知 URL（可重复）', collect, [])
     .option('--webhook-timeout <ms>', 'webhook 请求超时（毫秒）', value => parseInteger(value, 8000))
     .option('--multi-task-mode <mode>', '多任务执行模式（relay/serial/serial-continue/parallel，或中文描述）', 'relay')
@@ -196,6 +197,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--log-file <path>', '日志输出文件路径')
     .option('--background', '切入后台运行', false)
     .option('-v, --verbose', '输出调试日志', false)
+    .option('--skip-quality', '跳过代码质量检查', false)
     .action(async (options) => {
       const tasks = normalizeTaskList(options.task as string[] | string | undefined);
       if (tasks.length === 0) {
@@ -216,11 +218,8 @@ export async function runCli(argv: string[]): Promise<void> {
       const isForegroundChild = process.env[FOREGROUND_CHILD_ENV] === '1';
       const canForegroundDetach = !background && !isForegroundChild && process.stdout.isTTY && process.stdin.isTTY;
 
-      const shouldInjectBranch = useWorktree && !branchInput && !isMultiTask;
-      let branchNameForBackground = branchInput;
-      if (shouldInjectBranch) {
-        branchNameForBackground = generateBranchName();
-      }
+      const shouldInjectBranch = Boolean(useWorktree && branchInput && !isMultiTask);
+      const branchNameForBackground = branchInput;
 
       let logFile = logFileInput;
       if ((background || canForegroundDetach) && !logFile) {
@@ -301,24 +300,29 @@ export async function runCli(argv: string[]): Promise<void> {
         prBody: options.prBody as string | undefined,
         draft: Boolean(options.draft),
         reviewers: (options.reviewer as string[]) ?? [],
+        autoMerge: Boolean(options.autoMerge),
         webhookUrls: (options.webhook as string[]) ?? [],
         webhookTimeout: options.webhookTimeout as number | undefined,
         stopSignal: options.stopSignal as string,
         verbose: Boolean(options.verbose),
-        skipInstall: Boolean(options.skipInstall)
+        skipInstall: Boolean(options.skipInstall),
+        skipQuality: Boolean(options.skipQuality)
       };
 
-      const runPlan = async (plan: typeof taskPlans[number]): Promise<void> => {
+      const dynamicRelay = useWorktree && multiTaskMode === 'relay' && !branchInput;
+      let relayBaseBranch = options.baseBranch as string;
+
+      const runPlan = async (plan: typeof taskPlans[number], baseBranchOverride?: string): Promise<Awaited<ReturnType<typeof runLoop>>> => {
         const cliOptions: CliOptions = {
           task: plan.task,
           ...baseOptions,
           branch: plan.branchName,
           worktreePath: plan.worktreePath,
-          baseBranch: plan.baseBranch,
+          baseBranch: baseBranchOverride ?? plan.baseBranch,
           logFile: plan.logFile
         };
         const config = buildLoopConfig(cliOptions, process.cwd());
-        await runLoop(config);
+        return runLoop(config);
       };
 
       if (multiTaskMode === 'parallel') {
@@ -339,7 +343,11 @@ export async function runCli(argv: string[]): Promise<void> {
         const errors: string[] = [];
         for (const plan of taskPlans) {
           try {
-            await runPlan(plan);
+            const baseBranch = dynamicRelay ? relayBaseBranch : plan.baseBranch;
+            const result = await runPlan(plan, baseBranch);
+            if (dynamicRelay && result.branchName) {
+              relayBaseBranch = result.branchName;
+            }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             errors.push(`任务 ${plan.index + 1} 失败: ${message}`);
@@ -353,7 +361,11 @@ export async function runCli(argv: string[]): Promise<void> {
       }
 
       for (const plan of taskPlans) {
-        await runPlan(plan);
+        const baseBranch = dynamicRelay ? relayBaseBranch : plan.baseBranch;
+        const result = await runPlan(plan, baseBranch);
+        if (dynamicRelay && result.branchName) {
+          relayBaseBranch = result.branchName;
+        }
       }
     });
 

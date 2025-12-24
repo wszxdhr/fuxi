@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { generateBranchName } from './git';
 
 export type MultiTaskMode = 'relay' | 'serial' | 'serial-continue' | 'parallel';
 
@@ -65,10 +64,13 @@ export interface TaskPlan {
   readonly logFile?: string;
 }
 
-function buildBranchNameSeries(branchInput: string | undefined, total: number): string[] {
+function buildBranchNameSeries(branchInput: string | undefined, total: number): Array<string | undefined> {
   if (total <= 0) return [];
-  const baseName = branchInput ?? generateBranchName();
-  const names = [baseName];
+  if (!branchInput) {
+    return Array.from({ length: total }, () => undefined);
+  }
+  const baseName = branchInput;
+  const names: Array<string | undefined> = [baseName];
   for (let i = 1; i < total; i += 1) {
     names.push(`${baseName}-${i + 1}`);
   }
@@ -94,7 +96,7 @@ export function buildTaskPlans(input: TaskPlanInput): TaskPlan[] {
   const total = input.tasks.length;
   if (total === 0) return [];
 
-  const branchNames = input.useWorktree
+  const branchNames: Array<string | undefined> = input.useWorktree
     ? buildBranchNameSeries(input.branchInput, total)
     : input.tasks.map(() => input.branchInput);
 
