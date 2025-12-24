@@ -129,7 +129,7 @@ wheel-ai run --use-agent claude -t "补充文档"
 - 在监控界面按 `t` 触发终止，会弹出确认框（y/n）。
 
 ## Webhook 通知
-可通过 `--webhook` 配置通知回调地址，系统会在任务开始、第 N 轮开始、任务结束时发送 POST JSON。
+可通过 `--webhook` 配置通知回调地址，系统会在任务开始、第 N 轮开始、任务结束时发送 POST JSON；其中“计划生成”阶段（`iteration_start` 且 `stage` 为“计划生成”）会额外携带 `plan` 字段，换行统一为 `\n`。
 
 Payload 示例：
 ```json
@@ -155,6 +155,7 @@ Payload 示例：
 - `timestamp`：本地时区 `YYYYMMDD-HHmmss` 时间戳
 - `commit`：提交链接（仅在自动提交且推送成功时写入，否则为空字符串）
 - `pr`：PR 链接（存在时写入，否则为空字符串）
+- `plan`：计划原文（仅 `iteration_start` 且 `stage` 为“计划生成”时携带，换行标准化为 `\n`）
 
 ## 开发约束
 - 使用 yarn 管理依赖，TypeScript 避免 `any`。

@@ -13,6 +13,10 @@ export interface WebhookPayloadBase {
   readonly project: string;
   readonly commit: string;
   readonly pr: string;
+  /**
+   * 计划内容，仅在 iteration_start 且 stage 为“计划生成”时携带（换行已标准化为 \n）。
+   */
+  readonly plan?: string;
 }
 
 export type WebhookPayload =
@@ -33,6 +37,10 @@ export interface WebhookPayloadInputBase {
   readonly project: string;
   readonly commit?: string;
   readonly pr?: string;
+  /**
+   * 计划内容，仅在 iteration_start 且 stage 为“计划生成”时输入（换行已标准化为 \n）。
+   */
+  readonly plan?: string;
 }
 
 export type WebhookPayloadInput =
@@ -74,7 +82,8 @@ export function buildWebhookPayload(input: WebhookPayloadInput): WebhookPayload 
     timestamp: input.timestamp ?? localTimestamp(),
     project: input.project,
     commit: input.commit ?? '',
-    pr: input.pr ?? ''
+    pr: input.pr ?? '',
+    ...(input.plan !== undefined ? { plan: input.plan } : {})
   };
 
   if (input.event === 'task_start') {

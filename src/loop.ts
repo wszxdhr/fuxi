@@ -46,6 +46,10 @@ function truncateText(text: string, limit = 100): string {
   return `${trimmed.slice(0, limit)}...`;
 }
 
+function normalizePlanForWebhook(plan: string): string {
+  return plan.replace(/\r\n?/g, '\n');
+}
+
 async function safeCommandOutput(command: string, args: string[], cwd: string, logger: Logger, label: string, verboseCommand: string): Promise<string> {
   const result = await runCommand(command, args, {
     cwd,
@@ -336,7 +340,12 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
   const preWorktreeRecords: string[] = [];
   const resolveProjectName = (): string => path.basename(workDir);
 
-  const notifyWebhook = async (event: 'task_start' | 'iteration_start' | 'task_end', iteration: number, stage: string): Promise<void> => {
+  const notifyWebhook = async (
+    event: 'task_start' | 'iteration_start' | 'task_end',
+    iteration: number,
+    stage: string,
+    plan?: string
+  ): Promise<void> => {
     const project = resolveProjectName();
     const payload = event === 'task_start'
       ? buildWebhookPayload({
@@ -347,7 +356,8 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
           stage,
           project,
           commit: commitLink,
-          pr: prLink
+          pr: prLink,
+          plan
         })
       : buildWebhookPayload({
           event,
@@ -356,7 +366,8 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
           stage,
           project,
           commit: commitLink,
-          pr: prLink
+          pr: prLink,
+          plan
         });
     await sendWebhookNotifications(config.webhooks, payload, logger);
   };
@@ -454,7 +465,10 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
       extras?: { testResults?: TestRunResult[]; checkResults?: CheckRunResult[]; cwd?: string }
     ): Promise<void> => {
       sessionIndex += 1;
-      await notifyWebhook('iteration_start', sessionIndex, stage);
+      const webhookPlan = stage === '计划生成'
+        ? normalizePlanForWebhook(await readFileSafe(workflowFiles.planFile))
+        : undefined;
+      await notifyWebhook('iteration_start', sessionIndex, stage, webhookPlan);
       logger.info(`${stage} 提示构建完成，调用 AI CLI...`);
 
       const aiResult = await runAi(prompt, aiConfig, logger, extras?.cwd ?? workDir);

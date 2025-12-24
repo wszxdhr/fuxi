@@ -1,6 +1,6 @@
 {
   "name": "hamster-wheel-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "基于 AI CLI 的持续迭代开发工具，封装工作流、git worktree 与 gh PR 协作",
   "main": "dist/index.js",
   "keywords": [
