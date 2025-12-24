@@ -91,6 +91,7 @@ export interface PrConfig {
   readonly bodyPath?: string;
   readonly draft?: boolean;
   readonly reviewers?: string[];
+  readonly autoMerge?: boolean;
 }
 
 /**
@@ -131,6 +132,7 @@ export interface LoopConfig {
   readonly autoCommit: boolean;
   readonly autoPush: boolean;
   readonly skipInstall: boolean;
+  readonly skipQuality: boolean;
 }
 
 /**
@@ -169,8 +171,29 @@ export interface StreamOptions {
  */
 export interface IterationRecord {
   readonly iteration: number;
+  readonly stage?: string;
   readonly prompt: string;
   readonly aiOutput: string;
   readonly timestamp: string;
   readonly testResults?: TestRunResult[];
+  readonly checkResults?: CheckRunResult[];
+}
+
+/**
+ * 代码质量检查结果。
+ */
+export interface CheckRunResult {
+  readonly name: string;
+  readonly command: string;
+  readonly success: boolean;
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * 主流程返回信息。
+ */
+export interface LoopResult {
+  readonly branchName?: string;
 }

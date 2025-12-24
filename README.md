@@ -32,7 +32,9 @@ node dist/cli.js run \
 - `--run-tests`/`--run-e2e`：运行测试命令（默认 `yarn test`、`yarn e2e`）。
 - `--auto-commit`/`--auto-push`：迭代结束后自动提交与推送。
 - `--pr`：使用 `gh pr create` 创建 PR，可配合 `--pr-title`/`--pr-body`/`--draft`/`--reviewer`，未提供标题时会自动生成默认标题。
+- `--auto-merge`：为 PR 启用自动合并（通过后自动 merge）。
 - `--skip-install`：任务启动前跳过依赖检查与自动安装。
+- `--skip-quality`：跳过代码质量检查环节。
 - `--log-file`：将日志写入指定文件（相对路径基于当前工作目录）。
 - `-v, --verbose`：输出完整调试日志（包含执行命令、stdout/stderr），便于开发排查。
 - `--webhook`：配置通知回调地址（可重复设置多个 URL）。

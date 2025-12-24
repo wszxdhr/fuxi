@@ -1,14 +1,28 @@
 import fs from 'fs-extra';
 import path from 'node:path';
-import { buildPrompt, formatIterationRecord, mergeTokenUsage, runAi } from './ai';
+import {
+  buildBranchNamePrompt,
+  buildDocsPrompt,
+  buildFixPrompt,
+  buildPlanItemPrompt,
+  buildPlanningPrompt,
+  buildQualityPrompt,
+  buildTestPrompt,
+  formatIterationRecord,
+  mergeTokenUsage,
+  parseBranchName,
+  runAi
+} from './ai';
 import { ensureDependencies } from './deps';
-import { GhPrInfo, createPr, listFailedRuns, viewPr } from './gh';
+import { GhPrInfo, createPr, enableAutoMerge, listFailedRuns, viewPr } from './gh';
 import { Logger } from './logger';
-import { commitAll, ensureWorktree, getCurrentBranch, getRepoRoot, isBranchPushed, isWorktreeClean, pushBranch, removeWorktree } from './git';
+import { commitAll, ensureWorktree, generateBranchNameFromTask, getCurrentBranch, getRepoRoot, isBranchPushed, isWorktreeClean, pushBranch, removeWorktree } from './git';
 import { formatCommandLine } from './logs';
+import { getPendingPlanItems } from './plan';
+import { detectQualityCommands } from './quality';
 import { createRunTracker } from './runtime-tracker';
 import { buildFallbackSummary, buildSummaryPrompt, ensurePrBodySections, parseDeliverySummary } from './summary';
-import { CommitMessage, DeliverySummary, LoopConfig, TestRunResult, TokenUsage, WorkflowFiles, WorktreeResult } from './types';
+import { CheckRunResult, CommitMessage, DeliverySummary, LoopConfig, LoopResult, TestRunResult, TokenUsage, WorkflowFiles, WorktreeResult } from './types';
 import { appendSection, ensureFile, isoNow, readFileSafe, runCommand } from './utils';
 import { buildWebhookPayload, sendWebhookNotifications } from './webhook';
 
@@ -18,12 +32,18 @@ async function ensureWorkflowFiles(workflowFiles: WorkflowFiles): Promise<void> 
   await ensureFile(workflowFiles.notesFile, '# 持久化记忆\n');
 }
 
-const MAX_TEST_LOG_LENGTH = 4000;
+const MAX_LOG_LENGTH = 4000;
 
-function trimOutput(output: string, limit = MAX_TEST_LOG_LENGTH): string {
+function trimOutput(output: string, limit = MAX_LOG_LENGTH): string {
   if (!output) return '';
   if (output.length <= limit) return output;
   return `${output.slice(0, limit)}\n……（输出已截断，原始长度 ${output.length} 字符）`;
+}
+
+function truncateText(text: string, limit = 24): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= limit) return trimmed;
+  return `${trimmed.slice(0, limit)}...`;
 }
 
 async function safeCommandOutput(command: string, args: string[], cwd: string, logger: Logger, label: string, verboseCommand: string): Promise<string> {
@@ -66,6 +86,77 @@ async function runSingleTest(kind: 'unit' | 'e2e', command: string, cwd: string,
   };
 }
 
+async function runQualityChecks(commands: { name: string; command: string }[], cwd: string, logger: Logger): Promise<CheckRunResult[]> {
+  const results: CheckRunResult[] = [];
+  for (const item of commands) {
+    logger.info(`执行质量检查: ${item.command}`);
+    const result = await runCommand('bash', ['-lc', item.command], {
+      cwd,
+      logger,
+      verboseLabel: 'shell',
+      verboseCommand: `bash -lc "${item.command}"`
+    });
+    results.push({
+      name: item.name,
+      command: item.command,
+      success: result.exitCode === 0,
+      exitCode: result.exitCode,
+      stdout: trimOutput(result.stdout.trim()),
+      stderr: trimOutput(result.stderr.trim())
+    });
+  }
+  return results;
+}
+
+function buildCheckResultSummary(results: CheckRunResult[]): string {
+  if (results.length === 0) return '（未执行质量检查）';
+  return results
+    .map(result => {
+      const status = result.success ? '通过' : `失败（退出码 ${result.exitCode}）`;
+      const output = result.success ? '' : `\n${result.stderr || result.stdout || '（无输出）'}`;
+      return `- ${result.name}: ${status}｜命令: ${result.command}${output}`;
+    })
+    .join('\n');
+}
+
+function buildFailedCheckSummary(results: CheckRunResult[]): string {
+  return buildCheckResultSummary(results.filter(result => !result.success));
+}
+
+function buildTestResultSummary(results: TestRunResult[]): string {
+  if (results.length === 0) return '（未执行测试）';
+  return results
+    .map(result => {
+      const label = result.kind === 'unit' ? '单元测试' : 'e2e 测试';
+      const status = result.success ? '通过' : `失败（退出码 ${result.exitCode}）`;
+      const output = result.success ? '' : `\n${result.stderr || result.stdout || '（无输出）'}`;
+      return `- ${label}: ${status}｜命令: ${result.command}${output}`;
+    })
+    .join('\n');
+}
+
+function buildFailedTestSummary(results: TestRunResult[]): string {
+  return buildTestResultSummary(results.filter(result => !result.success));
+}
+
+function formatSystemRecord(stage: string, detail: string, timestamp: string): string {
+  return [
+    `### 记录 ｜ ${timestamp} ｜ ${stage}`,
+    '',
+    detail,
+    ''
+  ].join('\n');
+}
+
+function shouldSkipQuality(content: string, cliSkip: boolean): boolean {
+  if (cliSkip) return true;
+  const normalized = content.replace(/\s+/g, '');
+  if (!normalized) return false;
+  return normalized.includes('不要检查代码质量')
+    || normalized.includes('不检查代码质量')
+    || normalized.includes('跳过代码质量');
+}
+
 async function runTests(config: LoopConfig, workDir: string, logger: Logger): Promise<TestRunResult[]> {
   const results: TestRunResult[] = [];
 
@@ -80,6 +171,23 @@ async function runTests(config: LoopConfig, workDir: string, logger: Logger): Pr
   }
 
   return results;
+}
+
+async function runTestsSafely(config: LoopConfig, workDir: string, logger: Logger): Promise<TestRunResult[]> {
+  try {
+    return await runTests(config, workDir, logger);
+  } catch (error) {
+    const errorMessage = String(error);
+    logger.warn(`测试执行异常: ${errorMessage}`);
+    return [{
+      kind: 'unit',
+      command: config.tests.unitCommand ?? '未知测试命令',
+      success: false,
+      exitCode: -1,
+      stdout: '',
+      stderr: trimOutput(errorMessage)
+    }];
+  }
 }
 
 function reRootPath(filePath: string, repoRoot: string, workDir: string): string {
@@ -161,29 +269,28 @@ async function cleanupWorktreeIfSafe(context: WorktreeCleanupContext): Promise<v
 /**
  * 执行主迭代循环。
  */
-export async function runLoop(config: LoopConfig): Promise<void> {
+export async function runLoop(config: LoopConfig): Promise<LoopResult> {
   const logger = new Logger({ verbose: config.verbose, logFile: config.logFile });
   const repoRoot = await getRepoRoot(config.cwd, logger);
   logger.debug(`仓库根目录: ${repoRoot}`);
 
-  const worktreeResult: WorktreeResult = config.git.useWorktree
-    ? await ensureWorktree(config.git, repoRoot, logger)
-    : { path: repoRoot, created: false };
-  const workDir = worktreeResult.path;
-  const worktreeCreated = worktreeResult.created;
-  logger.debug(`工作目录: ${workDir}`);
+  let branchName = config.git.branchName;
+  let workDir = repoRoot;
+  let worktreeCreated = false;
 
   const commandLine = formatCommandLine(process.argv);
-  const runTracker = await createRunTracker({
-    logFile: config.logFile,
-    command: commandLine,
-    path: workDir,
-    logger
-  });
+  let runTracker: Awaited<ReturnType<typeof createRunTracker>> | null = null;
 
-  let branchName = config.git.branchName;
+  let accumulatedUsage: TokenUsage | null = null;
+  let lastTestResults: TestRunResult[] | null = null;
+  let lastAiOutput = '';
   let lastRound = 0;
   let runError: string | null = null;
+  let prInfo: GhPrInfo | null = null;
+  let prFailed = false;
+  let sessionIndex = 0;
+
+  const preWorktreeRecords: string[] = [];
 
   const notifyWebhook = async (event: 'task_start' | 'iteration_start' | 'task_end', iteration: number, stage: string): Promise<void> => {
     const payload = buildWebhookPayload({
@@ -197,16 +304,54 @@ export async function runLoop(config: LoopConfig): Promise<void> {
   };
 
   try {
-    if (!branchName) {
-      try {
-        branchName = await getCurrentBranch(workDir, logger);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.warn(`读取分支名失败，webhook 中将缺失分支信息：${message}`);
+    await notifyWebhook('task_start', 0, '任务开始');
+
+    if (config.git.useWorktree && !branchName) {
+      const branchPrompt = buildBranchNamePrompt({ task: config.task });
+      await notifyWebhook('iteration_start', sessionIndex + 1, '分支名生成');
+      logger.info('分支名生成提示构建完成，调用 AI CLI...');
+      const aiResult = await runAi(branchPrompt, config.ai, logger, repoRoot);
+      accumulatedUsage = mergeTokenUsage(accumulatedUsage, aiResult.usage);
+      lastAiOutput = aiResult.output;
+      sessionIndex += 1;
+      lastRound = sessionIndex;
+
+      const record = formatIterationRecord({
+        iteration: sessionIndex,
+        stage: '分支名生成',
+        prompt: branchPrompt,
+        aiOutput: aiResult.output,
+        timestamp: isoNow()
+      });
+      preWorktreeRecords.push(record);
+
+      const parsed = parseBranchName(aiResult.output);
+      if (parsed) {
+        branchName = parsed;
+        logger.info(`AI 生成分支名：${branchName}`);
+      } else {
+        branchName = generateBranchNameFromTask(config.task);
+        logger.warn(`未解析到 AI 分支名，使用兜底分支：${branchName}`);
       }
     }
 
-    await notifyWebhook('task_start', 0, '任务开始');
+    const worktreeResult: WorktreeResult = config.git.useWorktree
+      ? await ensureWorktree({ ...config.git, branchName }, repoRoot, logger)
+      : { path: repoRoot, created: false };
+    workDir = worktreeResult.path;
+    worktreeCreated = worktreeResult.created;
+    logger.debug(`工作目录: ${workDir}`);
+
+    runTracker = await createRunTracker({
+      logFile: config.logFile,
+      command: commandLine,
+      path: workDir,
+      logger
+    });
+
+    if (runTracker && sessionIndex > 0) {
+      await runTracker.update(sessionIndex, accumulatedUsage?.totalTokens ?? 0);
+    }
 
     if (config.skipInstall) {
       logger.info('已跳过依赖检查');
@@ -217,94 +362,231 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     const workflowFiles = reRootWorkflowFiles(config.workflowFiles, repoRoot, workDir);
     await ensureWorkflowFiles(workflowFiles);
 
+    if (preWorktreeRecords.length > 0) {
+      for (const record of preWorktreeRecords) {
+        await appendSection(workflowFiles.notesFile, record);
+      }
+      logger.success(`已写入分支名生成记录至 ${workflowFiles.notesFile}`);
+    }
+
     const planContent = await readFileSafe(workflowFiles.planFile);
     if (planContent.trim().length === 0) {
       logger.warn('plan 文件为空，建议 AI 首轮生成计划');
     }
 
+    if (!branchName) {
+      try {
+        branchName = await getCurrentBranch(workDir, logger);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn(`读取分支名失败，webhook 中将缺失分支信息：${message}`);
+      }
+    }
+
     const aiConfig = config.ai;
+    const loadContext = async (): Promise<{ workflowGuide: string; plan: string; notes: string }> => ({
+      workflowGuide: await readFileSafe(workflowFiles.workflowDoc),
+      plan: await readFileSafe(workflowFiles.planFile),
+      notes: await readFileSafe(workflowFiles.notesFile)
+    });
 
-    let accumulatedUsage: TokenUsage | null = null;
-    let lastTestResults: TestRunResult[] | null = null;
-    let lastAiOutput = '';
-    let prInfo: GhPrInfo | null = null;
-    let prFailed = false;
+    const runAiSession = async (
+      stage: string,
+      prompt: string,
+      extras?: { testResults?: TestRunResult[]; checkResults?: CheckRunResult[]; cwd?: string }
+    ): Promise<void> => {
+      sessionIndex += 1;
+      await notifyWebhook('iteration_start', sessionIndex, stage);
+      logger.info(`${stage} 提示构建完成，调用 AI CLI...`);
 
-    for (let i = 1; i <= config.iterations; i += 1) {
-      await notifyWebhook('iteration_start', i, `开始第 ${i} 轮迭代`);
+      const aiResult = await runAi(prompt, aiConfig, logger, extras?.cwd ?? workDir);
+      accumulatedUsage = mergeTokenUsage(accumulatedUsage, aiResult.usage);
+      lastAiOutput = aiResult.output;
 
-      const workflowGuide = await readFileSafe(workflowFiles.workflowDoc);
-      const plan = await readFileSafe(workflowFiles.planFile);
-      const notes = await readFileSafe(workflowFiles.notesFile);
-      logger.debug(`加载提示上下文，长度：workflow=${workflowGuide.length}, plan=${plan.length}, notes=${notes.length}`);
+      const record = formatIterationRecord({
+        iteration: sessionIndex,
+        stage,
+        prompt,
+        aiOutput: aiResult.output,
+        timestamp: isoNow(),
+        testResults: extras?.testResults,
+        checkResults: extras?.checkResults
+      });
 
-      const prompt = buildPrompt({
+      await appendSection(workflowFiles.notesFile, record);
+      logger.success(`已将${stage}输出写入 ${workflowFiles.notesFile}`);
+
+      lastRound = sessionIndex;
+      await runTracker?.update(sessionIndex, accumulatedUsage?.totalTokens ?? 0);
+    };
+
+    {
+      const { workflowGuide, plan, notes } = await loadContext();
+      const planningPrompt = buildPlanningPrompt({
         task: config.task,
         workflowGuide,
         plan,
         notes,
-        iteration: i
+        branchName
       });
-      logger.debug(`第 ${i} 轮提示长度: ${prompt.length}`);
+      await runAiSession('计划生成', planningPrompt);
+    }
 
-      logger.info(`第 ${i} 轮提示构建完成，调用 AI CLI...`);
-      const aiResult = await runAi(prompt, aiConfig, logger, workDir);
-      accumulatedUsage = mergeTokenUsage(accumulatedUsage, aiResult.usage);
-      lastAiOutput = aiResult.output;
+    let refreshedPlan = await readFileSafe(workflowFiles.planFile);
+    if (/(测试|test|e2e|单测)/i.test(refreshedPlan)) {
+      logger.warn('检测到 plan 中可能包含测试相关事项，建议保留开发内容并移除测试项。');
+    }
 
-      const hitStop = aiResult.output.includes(config.stopSignal);
-      let testResults: TestRunResult[] = [];
-      const shouldRunTests = config.runTests || config.runE2e;
-      if (shouldRunTests) {
-        try {
-          testResults = await runTests(config, workDir, logger);
-        } catch (error) {
-          const errorMessage = String(error);
-          logger.warn(`测试执行异常: ${errorMessage}`);
-          testResults = [{
-            kind: 'unit',
-            command: config.tests.unitCommand ?? '未知测试命令',
-            success: false,
-            exitCode: -1,
-            stdout: '',
-            stderr: trimOutput(errorMessage)
-          }];
-        }
-      }
-
-      const record = formatIterationRecord({
-        iteration: i,
-        prompt,
-        aiOutput: aiResult.output,
-        timestamp: isoNow(),
-        testResults
-      });
-
+    let pendingItems = getPendingPlanItems(refreshedPlan);
+    if (pendingItems.length === 0) {
+      logger.info('计划暂无待执行项，跳过计划执行循环');
+      const record = formatSystemRecord('计划执行', '未发现待执行计划项，已跳过执行循环。', isoNow());
       await appendSection(workflowFiles.notesFile, record);
-      logger.success(`已将第 ${i} 轮输出写入 ${workflowFiles.notesFile}`);
+    }
 
-      lastTestResults = testResults;
-      lastRound = i;
-      await runTracker?.update(i, accumulatedUsage?.totalTokens ?? 0);
-
-      const hasTestFailure = testResults.some(result => !result.success);
-
-      if (hitStop && !hasTestFailure) {
-        logger.info(`检测到停止标记 ${config.stopSignal}，提前结束循环`);
-        break;
+    let planRounds = 0;
+    while (pendingItems.length > 0) {
+      if (planRounds >= config.iterations) {
+        throw new Error('计划执行达到最大迭代次数，仍有未完成项');
       }
-      if (hitStop && hasTestFailure) {
-        logger.info(`检测到停止标记 ${config.stopSignal}，但测试失败，继续进入下一轮修复`);
+      const lastItem = pendingItems[pendingItems.length - 1];
+      const { workflowGuide, plan, notes } = await loadContext();
+      const itemPrompt = buildPlanItemPrompt({
+        task: config.task,
+        workflowGuide,
+        plan,
+        notes,
+        item: lastItem.text
+      });
+      await runAiSession(`执行计划项：${truncateText(lastItem.text)}`, itemPrompt);
+      planRounds += 1;
+      refreshedPlan = await readFileSafe(workflowFiles.planFile);
+      pendingItems = getPendingPlanItems(refreshedPlan);
+    }
+
+    const agentsContent = await readFileSafe(path.join(workDir, 'AGENTS.md'));
+    const skipQuality = shouldSkipQuality(agentsContent, config.skipQuality);
+    if (skipQuality) {
+      const record = formatSystemRecord('代码质量检查', '已按配置/AGENTS.md 跳过代码质量检查。', isoNow());
+      await appendSection(workflowFiles.notesFile, record);
+      logger.info('已跳过代码质量检查');
+    } else {
+      const qualityCommands = await detectQualityCommands(workDir);
+      if (qualityCommands.length === 0) {
+        const record = formatSystemRecord('代码质量检查', '未检测到可执行的质量检查命令，已跳过。', isoNow());
+        await appendSection(workflowFiles.notesFile, record);
+        logger.info('未检测到质量检查命令，跳过该阶段');
+      } else {
+        let qualityResults = await runQualityChecks(qualityCommands, workDir, logger);
+        const { workflowGuide, plan, notes } = await loadContext();
+        const qualityPrompt = buildQualityPrompt({
+          task: config.task,
+          workflowGuide,
+          plan,
+          notes,
+          commands: qualityCommands.map(item => item.command),
+          results: buildCheckResultSummary(qualityResults)
+        });
+        await runAiSession('代码质量检查', qualityPrompt, { checkResults: qualityResults });
+
+        let hasQualityFailure = qualityResults.some(result => !result.success);
+        let fixRounds = 0;
+        while (hasQualityFailure) {
+          if (fixRounds >= config.iterations) {
+            throw new Error('代码质量修复达到最大轮次，仍未通过');
+          }
+          const latest = await loadContext();
+          const fixPrompt = buildFixPrompt({
+            task: config.task,
+            workflowGuide: latest.workflowGuide,
+            plan: latest.plan,
+            notes: latest.notes,
+            stage: '代码质量',
+            errors: buildFailedCheckSummary(qualityResults)
+          });
+          await runAiSession('代码质量修复', fixPrompt);
+          fixRounds += 1;
+          qualityResults = await runQualityChecks(qualityCommands, workDir, logger);
+          hasQualityFailure = qualityResults.some(result => !result.success);
+
+          const recheckRecord = formatSystemRecord('代码质量复核', buildCheckResultSummary(qualityResults), isoNow());
+          await appendSection(workflowFiles.notesFile, recheckRecord);
+        }
       }
     }
 
-    const lastTestFailed = lastTestResults?.some(result => !result.success) ?? false;
+    if (config.runTests || config.runE2e) {
+      let testResults = await runTestsSafely(config, workDir, logger);
 
+      lastTestResults = testResults;
+      const testCommands: string[] = [];
+      if (config.runTests && config.tests.unitCommand) {
+        testCommands.push(config.tests.unitCommand);
+      }
+      if (config.runE2e && config.tests.e2eCommand) {
+        testCommands.push(config.tests.e2eCommand);
+      }
+
+      const { workflowGuide, plan, notes } = await loadContext();
+      const testPrompt = buildTestPrompt({
+        task: config.task,
+        workflowGuide,
+        plan,
+        notes,
+        commands: testCommands,
+        results: buildTestResultSummary(testResults)
+      });
+      await runAiSession('测试执行', testPrompt, { testResults });
+
+      let hasTestFailure = testResults.some(result => !result.success);
+      let fixRounds = 0;
+      while (hasTestFailure) {
+        if (fixRounds >= config.iterations) {
+          throw new Error('测试修复达到最大轮次，仍未通过');
+        }
+        const latest = await loadContext();
+        const fixPrompt = buildFixPrompt({
+          task: config.task,
+          workflowGuide: latest.workflowGuide,
+          plan: latest.plan,
+          notes: latest.notes,
+          stage: '测试',
+          errors: buildFailedTestSummary(testResults)
+        });
+        await runAiSession('测试修复', fixPrompt, { testResults });
+        fixRounds += 1;
+
+        testResults = await runTestsSafely(config, workDir, logger);
+        lastTestResults = testResults;
+        hasTestFailure = testResults.some(result => !result.success);
+
+        const recheckRecord = formatSystemRecord('测试复核', buildTestResultSummary(testResults), isoNow());
+        await appendSection(workflowFiles.notesFile, recheckRecord);
+      }
+    } else {
+      const record = formatSystemRecord('测试执行', '未开启单元测试或 e2e 测试，已跳过。', isoNow());
+      await appendSection(workflowFiles.notesFile, record);
+      logger.info('未开启测试阶段');
+    }
+
+    {
+      const { workflowGuide, plan, notes } = await loadContext();
+      const docsPrompt = buildDocsPrompt({
+        task: config.task,
+        workflowGuide,
+        plan,
+        notes
+      });
+      await runAiSession('文档更新', docsPrompt);
+    }
+
+    const lastTestFailed = lastTestResults?.some(result => !result.success) ?? false;
     if (lastTestFailed) {
       logger.warn('存在未通过的测试，已跳过自动提交/推送/PR');
     }
 
     let deliverySummary: DeliverySummary | null = null;
+    const deliveryNotes: string[] = [];
     const shouldPrepareDelivery = !lastTestFailed && (config.autoCommit || config.pr.enable);
     if (shouldPrepareDelivery) {
       const [gitStatus, diffStat] = await Promise.all([
@@ -334,57 +616,112 @@ export async function runLoop(config: LoopConfig): Promise<void> {
       if (!deliverySummary) {
         deliverySummary = buildFallbackSummary({ task: config.task, testResults: lastTestResults });
       }
+      if (deliverySummary) {
+        deliveryNotes.push(`交付摘要：提交 ${deliverySummary.commitTitle}｜PR ${deliverySummary.prTitle}`);
+      }
     }
     await runTracker?.update(lastRound, accumulatedUsage?.totalTokens ?? 0);
 
-    if (config.autoCommit && !lastTestFailed) {
-      const summary = deliverySummary ?? buildFallbackSummary({ task: config.task, testResults: lastTestResults });
-      const commitMessage: CommitMessage = {
-        title: summary.commitTitle,
-        body: summary.commitBody
-      };
-      await commitAll(commitMessage, workDir, logger).catch(error => {
-        logger.warn(String(error));
-      });
-    }
-
-    if (config.autoPush && branchName && !lastTestFailed) {
-      await pushBranch(branchName, workDir, logger).catch(error => {
-        logger.warn(String(error));
-      });
-    }
-
-    if (config.pr.enable && branchName && !lastTestFailed) {
-      logger.info('开始创建 PR...');
-      const summary = deliverySummary ?? buildFallbackSummary({ task: config.task, testResults: lastTestResults });
-      const prTitleCandidate = config.pr.title?.trim() || summary.prTitle;
-      const prBodyContent = ensurePrBodySections(summary.prBody, {
-        commitTitle: summary.commitTitle,
-        commitBody: summary.commitBody,
-        testResults: lastTestResults
-      });
-      const bodyFile = config.pr.bodyPath ?? buildBodyFile(workDir);
-      await writePrBody(bodyFile, prBodyContent, Boolean(config.pr.bodyPath));
-
-      const createdPr = await createPr(branchName, { ...config.pr, title: prTitleCandidate, bodyPath: bodyFile }, workDir, logger);
-      prInfo = createdPr;
-      if (createdPr) {
-        logger.success(`PR 已创建: ${createdPr.url}`);
-        const failedRuns = await listFailedRuns(branchName, workDir, logger);
-        if (failedRuns.length > 0) {
-          failedRuns.forEach(run => {
-            logger.warn(`Actions 失败: ${run.name} (${run.status}/${run.conclusion ?? 'unknown'}) ${run.url}`);
-          });
-        }
+    if (config.autoCommit) {
+      if (lastTestFailed) {
+        deliveryNotes.push('自动提交：已跳过（测试未通过）');
       } else {
-        prFailed = true;
-        logger.error('PR 创建失败，详见上方 gh 输出');
+        const summary = deliverySummary ?? buildFallbackSummary({ task: config.task, testResults: lastTestResults });
+        const commitMessage: CommitMessage = {
+          title: summary.commitTitle,
+          body: summary.commitBody
+        };
+        try {
+          const committed = await commitAll(commitMessage, workDir, logger);
+          deliveryNotes.push(committed ? `自动提交：已提交（${commitMessage.title}）` : '自动提交：未生成提交（可能无变更或提交失败）');
+        } catch (error) {
+          deliveryNotes.push(`自动提交：失败（${String(error)}）`);
+        }
       }
-    } else if (branchName && !config.pr.enable) {
+    } else {
+      deliveryNotes.push('自动提交：未开启');
+    }
+
+    if (config.autoPush) {
+      if (lastTestFailed) {
+        deliveryNotes.push('自动推送：已跳过（测试未通过）');
+      } else if (!branchName) {
+        deliveryNotes.push('自动推送：已跳过（缺少分支名）');
+      } else {
+        try {
+          await pushBranch(branchName, workDir, logger);
+          deliveryNotes.push(`自动推送：已推送（${branchName}）`);
+        } catch (error) {
+          deliveryNotes.push(`自动推送：失败（${String(error)}）`);
+        }
+      }
+    } else {
+      deliveryNotes.push('自动推送：未开启');
+    }
+
+    if (config.pr.enable) {
+      if (lastTestFailed) {
+        deliveryNotes.push('PR 创建：已跳过（测试未通过）');
+      } else if (!branchName) {
+        deliveryNotes.push('PR 创建：已跳过（缺少分支名）');
+      } else {
+        logger.info('开始创建 PR...');
+        const summary = deliverySummary ?? buildFallbackSummary({ task: config.task, testResults: lastTestResults });
+        const prTitleCandidate = config.pr.title?.trim() || summary.prTitle;
+        const prBodyContent = ensurePrBodySections(summary.prBody, {
+          commitTitle: summary.commitTitle,
+          commitBody: summary.commitBody,
+          testResults: lastTestResults
+        });
+        const bodyFile = config.pr.bodyPath ?? buildBodyFile(workDir);
+        await writePrBody(bodyFile, prBodyContent, Boolean(config.pr.bodyPath));
+
+        const createdPr = await createPr(branchName, { ...config.pr, title: prTitleCandidate, bodyPath: bodyFile }, workDir, logger);
+        prInfo = createdPr;
+        if (createdPr) {
+          logger.success(`PR 已创建: ${createdPr.url}`);
+          deliveryNotes.push(`PR 创建：已完成（${createdPr.url}）`);
+          if (config.pr.autoMerge) {
+            const target = createdPr.number > 0 ? createdPr.number : createdPr.url;
+            const merged = await enableAutoMerge(target, workDir, logger);
+            if (merged) {
+              deliveryNotes.push('PR 自动合并：已启用');
+            } else {
+              deliveryNotes.push('PR 自动合并：启用失败');
+              prFailed = true;
+            }
+          } else {
+            deliveryNotes.push('PR 自动合并：未开启');
+          }
+          const failedRuns = await listFailedRuns(branchName, workDir, logger);
+          if (failedRuns.length > 0) {
+            failedRuns.forEach(run => {
+              logger.warn(`Actions 失败: ${run.name} (${run.status}/${run.conclusion ?? 'unknown'}) ${run.url}`);
+            });
+          }
+        } else {
+          prFailed = true;
+          deliveryNotes.push('PR 创建：失败（详见 gh 输出）');
+          logger.error('PR 创建失败，详见上方 gh 输出');
+        }
+      }
+    } else if (branchName) {
       logger.info('未开启 PR 创建（--pr 未传），尝试查看已有 PR');
       const existingPr = await viewPr(branchName, workDir, logger);
       prInfo = existingPr;
-      if (existingPr) logger.info(`已有 PR: ${existingPr.url}`);
+      if (existingPr) {
+        logger.info(`已有 PR: ${existingPr.url}`);
+        deliveryNotes.push(`PR 创建：未开启（已存在 PR：${existingPr.url}）`);
+      } else {
+        deliveryNotes.push('PR 创建：未开启（未检测到已有 PR）');
+      }
+    } else {
+      deliveryNotes.push('PR 创建：未开启（缺少分支名）');
+    }
+
+    if (deliveryNotes.length > 0) {
+      const record = formatSystemRecord('提交与PR', deliveryNotes.join('\n'), isoNow());
+      await appendSection(workflowFiles.notesFile, record);
     }
 
     if (accumulatedUsage) {
@@ -411,6 +748,7 @@ export async function runLoop(config: LoopConfig): Promise<void> {
     }
 
     logger.success(`wheel-ai 迭代流程结束｜Token 总计 ${accumulatedUsage?.totalTokens ?? '未知'}`);
+    return { branchName };
   } catch (error) {
     runError = error instanceof Error ? error.message : String(error);
     throw error;
