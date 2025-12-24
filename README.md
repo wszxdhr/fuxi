@@ -1,4 +1,4 @@
-# hamster-wheel-cli
+# wheel-ai
 
 基于 Node.js + commander 的持续迭代开发工具，结合外部 AI CLI（运行时指定）驱动完整软件交付流程：需求澄清、计划生成、编码、自审、测试（单元+e2e）、推送与 PR。
 
