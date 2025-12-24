@@ -5,9 +5,14 @@
 ## [0.2.1] - 2025-12-24
 ### Added
 - webhook payload 新增 `project` 字段，值为当前工作目录名称（仅文件夹名）。
+- webhook payload 新增 `commit` 与 `pr` 字段，用于提交与 PR 链接（无链接时为空字符串）。
+- 新增 `agent add/delete/set/list` 命令，支持管理 AI CLI 命令配置。
+- 支持在全局配置中存储与解析 `[agent]` 表（兼容 `[agents]` 读取），便于复用 AI CLI 命令。
 
 ### Changed
 - 仅在 `task_start` 事件发送 `task` 字段，其余阶段不再携带。
+- webhook 时间戳改为本地时区 `YYYYMMDD-HHmmss` 格式。
+- logs 列表支持 PageUp/PageDown 翻页，并补充按键提示。
 
 ## [0.2.0] - 2025-12-24
 ### Added

@@ -21,6 +21,14 @@ export interface AliasEntry {
 }
 
 /**
+ * 全局 agent 配置条目。
+ */
+export interface AgentEntry {
+  readonly name: string;
+  readonly command: string;
+}
+
+/**
  * 全局配置结构。
  */
 export interface GlobalConfig {
@@ -177,6 +185,13 @@ export function normalizeAliasName(name: string): string | null {
   return normalizeShortcutName(name);
 }
 
+/**
+ * 规范化 agent 名称。
+ */
+export function normalizeAgentName(name: string): string | null {
+  return normalizeShortcutName(name);
+}
+
 function formatTomlString(value: string): string {
   const escaped = value
     .replace(/\\/g, '\\\\')
@@ -185,6 +200,43 @@ function formatTomlString(value: string): string {
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t');
   return `"${escaped}"`;
+}
+
+interface SectionRange {
+  readonly name: string;
+  readonly start: number;
+  end: number;
+}
+
+function collectSectionRanges(lines: string[]): SectionRange[] {
+  const ranges: SectionRange[] = [];
+  let current: SectionRange | null = null;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^\s*\[(.+?)\]\s*$/.exec(lines[i]);
+    if (!match) continue;
+
+    if (current) {
+      current.end = i;
+      ranges.push(current);
+    }
+
+    current = {
+      name: match[1].trim(),
+      start: i,
+      end: lines.length
+    };
+  }
+
+  if (current) {
+    ranges.push(current);
+  }
+
+  return ranges;
+}
+
+function isAgentSection(name: string | null): boolean {
+  return name === 'agent' || name === 'agents';
 }
 
 /**
@@ -243,6 +295,117 @@ export async function upsertAliasEntry(name: string, command: string, filePath: 
   const nextContent = updateAliasContent(content, name, command);
   await fs.mkdirp(path.dirname(filePath));
   await fs.writeFile(filePath, nextContent, 'utf8');
+}
+
+function ensureTrailingNewline(content: string): string {
+  if (!content) return '';
+  return content.endsWith('\n') ? content : `${content}\n`;
+}
+
+function findAgentRangeWithEntry(lines: string[], ranges: SectionRange[], name: string): SectionRange | null {
+  for (const range of ranges) {
+    for (let i = range.start + 1; i < range.end; i += 1) {
+      const parsed = parseTomlKeyValue(stripTomlComment(lines[i]).trim());
+      if (!parsed) continue;
+      if (parsed.key === name) return range;
+    }
+  }
+  return null;
+}
+
+/**
+ * 更新 agent 配置内容，返回新文本。
+ */
+export function updateAgentContent(content: string, name: string, command: string): string {
+  const lines = content.split(/\r?\n/);
+  const entryLine = `${name} = ${formatTomlString(command)}`;
+  const ranges = collectSectionRanges(lines);
+  const agentRanges = ranges.filter(range => isAgentSection(range.name));
+  let targetRange = findAgentRangeWithEntry(lines, agentRanges, name);
+
+  if (!targetRange) {
+    targetRange = agentRanges.find(range => range.name === 'agent') ?? agentRanges.find(range => range.name === 'agents') ?? null;
+  }
+
+  if (!targetRange) {
+    const trimmed = content.trimEnd();
+    const prefix = trimmed.length > 0 ? `${trimmed}\n\n` : '';
+    return `${prefix}[agent]\n${entryLine}\n`;
+  }
+
+  let replaced = false;
+  for (let i = targetRange.start + 1; i < targetRange.end; i += 1) {
+    const parsed = parseTomlKeyValue(stripTomlComment(lines[i]).trim());
+    if (!parsed) continue;
+    if (parsed.key === name) {
+      lines[i] = entryLine;
+      replaced = true;
+      break;
+    }
+  }
+
+  if (!replaced) {
+    lines.splice(targetRange.end, 0, entryLine);
+  }
+
+  const output = lines.join('\n');
+  return output.endsWith('\n') ? output : `${output}\n`;
+}
+
+/**
+ * 删除 agent 配置内容，返回删除结果与新文本。
+ */
+export function removeAgentContent(content: string, name: string): { removed: boolean; nextContent: string } {
+  const lines = content.split(/\r?\n/);
+  const ranges = collectSectionRanges(lines).filter(range => isAgentSection(range.name));
+  const removeIndices: number[] = [];
+
+  for (const range of ranges) {
+    for (let i = range.start + 1; i < range.end; i += 1) {
+      const parsed = parseTomlKeyValue(stripTomlComment(lines[i]).trim());
+      if (!parsed) continue;
+      if (parsed.key === name) {
+        removeIndices.push(i);
+      }
+    }
+  }
+
+  if (removeIndices.length === 0) {
+    return { removed: false, nextContent: ensureTrailingNewline(content) };
+  }
+
+  removeIndices
+    .sort((a, b) => b - a)
+    .forEach(index => {
+      lines.splice(index, 1);
+    });
+
+  const output = lines.join('\n');
+  return { removed: true, nextContent: output.endsWith('\n') ? output : `${output}\n` };
+}
+
+/**
+ * 写入或更新 agent 配置。
+ */
+export async function upsertAgentEntry(name: string, command: string, filePath: string = getGlobalConfigPath()): Promise<void> {
+  const exists = await fs.pathExists(filePath);
+  const content = exists ? await fs.readFile(filePath, 'utf8') : '';
+  const nextContent = updateAgentContent(content, name, command);
+  await fs.mkdirp(path.dirname(filePath));
+  await fs.writeFile(filePath, nextContent, 'utf8');
+}
+
+/**
+ * 删除 agent 配置，返回是否删除成功。
+ */
+export async function removeAgentEntry(name: string, filePath: string = getGlobalConfigPath()): Promise<boolean> {
+  const exists = await fs.pathExists(filePath);
+  if (!exists) return false;
+  const content = await fs.readFile(filePath, 'utf8');
+  const { removed, nextContent } = removeAgentContent(content, name);
+  if (!removed) return false;
+  await fs.writeFile(filePath, nextContent, 'utf8');
+  return true;
 }
 
 /**
@@ -326,6 +489,44 @@ export function parseAliasEntries(content: string): AliasEntry[] {
       name: shortcut.name,
       command: shortcut.command,
       source: 'shortcut'
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * 解析 agent 配置条目（支持 [agent]/[agents]）。
+ */
+export function parseAgentEntries(content: string): AgentEntry[] {
+  const lines = content.split(/\r?\n/);
+  let currentSection: string | null = null;
+  const entries: AgentEntry[] = [];
+  const names = new Set<string>();
+
+  for (const rawLine of lines) {
+    const line = stripTomlComment(rawLine).trim();
+    if (!line) continue;
+
+    const sectionMatch = /^\[(.+)\]$/.exec(line);
+    if (sectionMatch) {
+      currentSection = sectionMatch[1].trim();
+      continue;
+    }
+
+    if (!isAgentSection(currentSection)) continue;
+    const parsed = parseTomlKeyValue(line);
+    if (!parsed) continue;
+
+    const name = normalizeShortcutName(parsed.key);
+    const command = parsed.value.trim();
+    if (!name || !command) continue;
+    if (names.has(name)) continue;
+
+    names.add(name);
+    entries.push({
+      name,
+      command
     });
   }
 

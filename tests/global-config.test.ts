@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyShortcutArgv, parseAliasEntries, parseGlobalConfig, splitCommandArgs, updateAliasContent } from '../src/global-config';
+import {
+  applyShortcutArgv,
+  parseAgentEntries,
+  parseAliasEntries,
+  parseGlobalConfig,
+  removeAgentContent,
+  splitCommandArgs,
+  updateAgentContent,
+  updateAliasContent
+} from '../src/global-config';
 
 test('parseGlobalConfig 读取 shortcut 配置', () => {
   const content = `
@@ -100,4 +109,83 @@ command = "--run-e2e"
   const result = updateAliasContent(content, 'daily', '--task "新命令"');
   assert.ok(result.includes('daily = "--task \\"新命令\\""'));
   assert.ok(result.includes('[shortcut]'));
+});
+
+test('parseAgentEntries 读取 agent 配置', () => {
+  const content = `
+[agent]
+claude = "claude --model sonnet"
+`;
+  const entries = parseAgentEntries(content);
+  assert.deepEqual(entries, [
+    {
+      name: 'claude',
+      command: 'claude --model sonnet'
+    }
+  ]);
+});
+
+test('parseAgentEntries 支持 agents 并忽略重复', () => {
+  const content = `
+[agents]
+daily = "cmd-a"
+
+[agent]
+daily = "cmd-b"
+weekly = "cmd-c"
+`;
+  const entries = parseAgentEntries(content);
+  assert.deepEqual(entries, [
+    {
+      name: 'daily',
+      command: 'cmd-a'
+    },
+    {
+      name: 'weekly',
+      command: 'cmd-c'
+    }
+  ]);
+});
+
+test('updateAgentContent 会在空文件中写入 agent', () => {
+  const result = updateAgentContent('', 'daily', 'claude --model sonnet');
+  assert.ok(result.includes('[agent]'));
+  assert.ok(result.includes('daily = "claude --model sonnet"'));
+  assert.ok(result.endsWith('\n'));
+});
+
+test('updateAgentContent 会更新已有 agent 并保留其他配置', () => {
+  const content = `
+[agent]
+daily = "cmd-a"
+
+[shortcut]
+name = "quick"
+command = "--run-e2e"
+`;
+  const result = updateAgentContent(content, 'daily', 'cmd-b');
+  assert.ok(result.includes('daily = "cmd-b"'));
+  assert.ok(result.includes('[shortcut]'));
+});
+
+test('removeAgentContent 会删除指定 agent', () => {
+  const content = `
+[agent]
+daily = "cmd-a"
+weekly = "cmd-b"
+`;
+  const { removed, nextContent } = removeAgentContent(content, 'daily');
+  assert.equal(removed, true);
+  assert.ok(!nextContent.includes('daily = "cmd-a"'));
+  assert.ok(nextContent.includes('weekly = "cmd-b"'));
+});
+
+test('removeAgentContent 未命中时保持原内容', () => {
+  const content = `
+[agent]
+weekly = "cmd-b"
+`;
+  const { removed, nextContent } = removeAgentContent(content, 'daily');
+  assert.equal(removed, false);
+  assert.ok(nextContent.includes('weekly = "cmd-b"'));
 });

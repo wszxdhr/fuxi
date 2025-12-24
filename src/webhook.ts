@@ -1,5 +1,5 @@
 import { Logger } from './logger';
-import { isoNow } from './utils';
+import { localTimestamp } from './utils';
 import type { WebhookConfig } from './types';
 
 export type WebhookEvent = 'task_start' | 'iteration_start' | 'task_end';
@@ -11,6 +11,8 @@ export interface WebhookPayloadBase {
   readonly stage: string;
   readonly timestamp: string;
   readonly project: string;
+  readonly commit: string;
+  readonly pr: string;
 }
 
 export type WebhookPayload =
@@ -29,6 +31,8 @@ export interface WebhookPayloadInputBase {
   readonly stage: string;
   readonly timestamp?: string;
   readonly project: string;
+  readonly commit?: string;
+  readonly pr?: string;
 }
 
 export type WebhookPayloadInput =
@@ -67,8 +71,10 @@ export function buildWebhookPayload(input: WebhookPayloadInput): WebhookPayload 
     branch: input.branch ?? '',
     iteration: input.iteration,
     stage: input.stage,
-    timestamp: input.timestamp ?? isoNow(),
-    project: input.project
+    timestamp: input.timestamp ?? localTimestamp(),
+    project: input.project,
+    commit: input.commit ?? '',
+    pr: input.pr ?? ''
   };
 
   if (input.event === 'task_start') {
