@@ -132,7 +132,9 @@ Payload 示例：
   "branch": "feat/webhooks",
   "iteration": 0,
   "stage": "任务开始",
-  "timestamp": "2024-01-01T00:00:00.000Z"
+  "timestamp": "20251224-210815",
+  "commit": "",
+  "pr": ""
 }
 ```
 字段说明：
@@ -141,7 +143,9 @@ Payload 示例：
 - `branch`：分支名（可能为空）
 - `iteration`：当前轮次（任务开始为 0）
 - `stage`：当前节点描述
-- `timestamp`：ISO 时间戳
+- `timestamp`：本地时区 `YYYYMMDD-HHmmss` 时间戳
+- `commit`：提交链接（仅在自动提交且推送成功时写入，否则为空字符串）
+- `pr`：PR 链接（存在时写入，否则为空字符串）
 
 ## 开发约束
 - 使用 yarn 管理依赖，TypeScript 避免 `any`。

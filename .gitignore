@@ -40,3 +40,6 @@ coverage/
 
 # AI相关
 memory/*
+
+# Auto Claude data directory
+.auto-claude/

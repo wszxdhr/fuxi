@@ -144,7 +144,7 @@ async function readLogLines(logFile: string): Promise<string[]> {
 
 function buildListHeader(state: LogsViewerState, columns: number): string {
   const total = state.logs.length;
-  const title = `日志列表（${total} 条）｜↑/↓ 选择  Enter 查看  q 退出`;
+  const title = `日志列表（${total} 条）｜↑/↓ 选择  PageUp/PageDown 翻页  Enter 查看  q 退出`;
   return truncateLine(title, columns);
 }
 
@@ -394,6 +394,18 @@ export async function runLogsViewer(): Promise<void> {
       }
       if (isArrowDown(input)) {
         state.selectedIndex = clampIndex(state.selectedIndex + 1, state.logs.length);
+        render(state);
+        return;
+      }
+      if (isPageUp(input)) {
+        const pageSize = getPageSize(getTerminalSize().rows);
+        state.selectedIndex = clampIndex(state.selectedIndex - pageSize, state.logs.length);
+        render(state);
+        return;
+      }
+      if (isPageDown(input)) {
+        const pageSize = getPageSize(getTerminalSize().rows);
+        state.selectedIndex = clampIndex(state.selectedIndex + pageSize, state.logs.length);
         render(state);
         return;
       }
