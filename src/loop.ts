@@ -316,6 +316,8 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
   const logger = new Logger({ verbose: config.verbose, logFile: config.logFile });
   const repoRoot = await getRepoRoot(config.cwd, logger);
   logger.debug(`仓库根目录: ${repoRoot}`);
+  // 项目名以首次识别为准，避免切换 worktree 后发生变化。
+  const initialProjectName = path.basename(repoRoot);
 
   let branchName = config.git.branchName;
   let workDir = repoRoot;
@@ -338,7 +340,7 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
   let pushSucceeded = false;
 
   const preWorktreeRecords: string[] = [];
-  const resolveProjectName = (): string => path.basename(workDir);
+  const resolveProjectName = (): string => initialProjectName;
 
   const notifyWebhook = async (
     event: 'task_start' | 'iteration_start' | 'task_end',

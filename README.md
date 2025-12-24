@@ -148,7 +148,7 @@ Payload 示例：
 字段说明：
 - `event`：`task_start` / `iteration_start` / `task_end`
 - `task`：任务描述（仅 `task_start` 会携带）
-- `project`：当前工作目录名称（仅文件夹名，不含路径）
+- `project`：首次识别的仓库根目录名称（仅文件夹名，不含路径），切换 worktree 后保持不变
 - `branch`：分支名（可能为空）
 - `iteration`：当前轮次（任务开始为 0）
 - `stage`：当前节点描述
