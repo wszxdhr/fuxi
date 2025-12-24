@@ -2,7 +2,15 @@ import { spawn } from 'node:child_process';
 import fs from 'fs-extra';
 import { Command } from 'commander';
 import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, defaultWorkflowDoc } from './config';
-import { applyShortcutArgv, loadGlobalConfig, normalizeAliasName, upsertAliasEntry } from './global-config';
+import {
+  applyShortcutArgv,
+  getGlobalConfigPath,
+  loadGlobalConfig,
+  normalizeAliasName,
+  parseAliasEntries,
+  splitCommandArgs,
+  upsertAliasEntry
+} from './global-config';
 import { getCurrentBranch } from './git';
 import { buildAutoLogFilePath, formatCommandLine } from './logs';
 import { runAliasViewer } from './alias-viewer';
@@ -15,6 +23,59 @@ import { tailLogFile } from './log-tailer';
 import { resolvePath } from './utils';
 
 const FOREGROUND_CHILD_ENV = 'WHEEL_AI_FOREGROUND_CHILD';
+
+type OptionValueMode = 'none' | 'single' | 'variadic';
+
+interface RunOptionSpec {
+  readonly name: string;
+  readonly flags: readonly string[];
+  readonly valueMode: OptionValueMode;
+}
+
+interface ParsedArgSegment {
+  readonly name?: string;
+  readonly tokens: string[];
+}
+
+const RUN_OPTION_SPECS: RunOptionSpec[] = [
+  { name: 'task', flags: ['-t', '--task'], valueMode: 'single' },
+  { name: 'iterations', flags: ['-i', '--iterations'], valueMode: 'single' },
+  { name: 'ai-cli', flags: ['--ai-cli'], valueMode: 'single' },
+  { name: 'ai-args', flags: ['--ai-args'], valueMode: 'variadic' },
+  { name: 'ai-prompt-arg', flags: ['--ai-prompt-arg'], valueMode: 'single' },
+  { name: 'notes-file', flags: ['--notes-file'], valueMode: 'single' },
+  { name: 'plan-file', flags: ['--plan-file'], valueMode: 'single' },
+  { name: 'workflow-doc', flags: ['--workflow-doc'], valueMode: 'single' },
+  { name: 'worktree', flags: ['--worktree'], valueMode: 'none' },
+  { name: 'branch', flags: ['--branch'], valueMode: 'single' },
+  { name: 'worktree-path', flags: ['--worktree-path'], valueMode: 'single' },
+  { name: 'base-branch', flags: ['--base-branch'], valueMode: 'single' },
+  { name: 'skip-install', flags: ['--skip-install'], valueMode: 'none' },
+  { name: 'run-tests', flags: ['--run-tests'], valueMode: 'none' },
+  { name: 'run-e2e', flags: ['--run-e2e'], valueMode: 'none' },
+  { name: 'unit-command', flags: ['--unit-command'], valueMode: 'single' },
+  { name: 'e2e-command', flags: ['--e2e-command'], valueMode: 'single' },
+  { name: 'auto-commit', flags: ['--auto-commit'], valueMode: 'none' },
+  { name: 'auto-push', flags: ['--auto-push'], valueMode: 'none' },
+  { name: 'pr', flags: ['--pr'], valueMode: 'none' },
+  { name: 'pr-title', flags: ['--pr-title'], valueMode: 'single' },
+  { name: 'pr-body', flags: ['--pr-body'], valueMode: 'single' },
+  { name: 'draft', flags: ['--draft'], valueMode: 'none' },
+  { name: 'reviewer', flags: ['--reviewer'], valueMode: 'variadic' },
+  { name: 'auto-merge', flags: ['--auto-merge'], valueMode: 'none' },
+  { name: 'webhook', flags: ['--webhook'], valueMode: 'single' },
+  { name: 'webhook-timeout', flags: ['--webhook-timeout'], valueMode: 'single' },
+  { name: 'multi-task-mode', flags: ['--multi-task-mode'], valueMode: 'single' },
+  { name: 'stop-signal', flags: ['--stop-signal'], valueMode: 'single' },
+  { name: 'log-file', flags: ['--log-file'], valueMode: 'single' },
+  { name: 'background', flags: ['--background'], valueMode: 'none' },
+  { name: 'verbose', flags: ['-v', '--verbose'], valueMode: 'none' },
+  { name: 'skip-quality', flags: ['--skip-quality'], valueMode: 'none' }
+];
+
+const RUN_OPTION_FLAG_MAP = new Map<string, RunOptionSpec>(
+  RUN_OPTION_SPECS.flatMap(spec => spec.flags.map(flag => [flag, spec] as const))
+);
 
 function parseInteger(value: string, defaultValue: number): number {
   const parsed = Number.parseInt(value, 10);
@@ -55,6 +116,116 @@ function extractAliasCommandArgs(argv: string[], name: string): string[] {
   const rest = args.slice(start + 3);
   if (rest[0] === '--') return rest.slice(1);
   return rest;
+}
+
+function isAliasCommandToken(token: string): boolean {
+  return token === 'alias' || token === 'aliases';
+}
+
+function extractAliasRunArgs(argv: string[], name: string): string[] {
+  const args = argv.slice(2);
+  const start = args.findIndex(
+    (arg, index) => isAliasCommandToken(arg) && args[index + 1] === 'run' && args[index + 2] === name
+  );
+  if (start < 0) return [];
+  const rest = args.slice(start + 3);
+  if (rest[0] === '--') return rest.slice(1);
+  return rest;
+}
+
+function normalizeAliasCommandArgs(args: string[]): string[] {
+  let start = 0;
+  if (args[start] === 'wheel-ai') {
+    start += 1;
+  }
+  if (args[start] === 'run') {
+    start += 1;
+  }
+  return args.slice(start);
+}
+
+function resolveRunOptionSpec(token: string): { spec: RunOptionSpec; inlineValue?: string } | null {
+  const equalIndex = token.indexOf('=');
+  const flag = equalIndex > 0 ? token.slice(0, equalIndex) : token;
+  const spec = RUN_OPTION_FLAG_MAP.get(flag);
+  if (!spec) return null;
+  if (equalIndex > 0) {
+    return { spec, inlineValue: token.slice(equalIndex + 1) };
+  }
+  return { spec };
+}
+
+function parseArgSegments(tokens: string[]): ParsedArgSegment[] {
+  const segments: ParsedArgSegment[] = [];
+  let index = 0;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token === '--') {
+      segments.push({ tokens: tokens.slice(index) });
+      break;
+    }
+
+    const match = resolveRunOptionSpec(token);
+    if (!match) {
+      segments.push({ tokens: [token] });
+      index += 1;
+      continue;
+    }
+
+    if (match.inlineValue !== undefined) {
+      segments.push({ name: match.spec.name, tokens: [token] });
+      index += 1;
+      continue;
+    }
+
+    if (match.spec.valueMode === 'none') {
+      segments.push({ name: match.spec.name, tokens: [token] });
+      index += 1;
+      continue;
+    }
+
+    if (match.spec.valueMode === 'single') {
+      const next = tokens[index + 1];
+      if (next !== undefined) {
+        segments.push({ name: match.spec.name, tokens: [token, next] });
+        index += 2;
+      } else {
+        segments.push({ name: match.spec.name, tokens: [token] });
+        index += 1;
+      }
+      continue;
+    }
+
+    const values: string[] = [];
+    let cursor = index + 1;
+    while (cursor < tokens.length) {
+      const next = tokens[cursor];
+      if (next === '--') break;
+      const nextMatch = resolveRunOptionSpec(next);
+      if (nextMatch) break;
+      values.push(next);
+      cursor += 1;
+    }
+    segments.push({ name: match.spec.name, tokens: [token, ...values] });
+    index = cursor;
+  }
+
+  return segments;
+}
+
+function mergeAliasCommandArgs(aliasTokens: string[], additionTokens: string[]): string[] {
+  const aliasSegments = parseArgSegments(aliasTokens);
+  const additionSegments = parseArgSegments(additionTokens);
+  const overrideNames = new Set(
+    additionSegments.flatMap(segment => (segment.name ? [segment.name] : []))
+  );
+
+  const merged = [
+    ...aliasSegments.filter(segment => !segment.name || !overrideNames.has(segment.name)),
+    ...additionSegments
+  ];
+
+  return merged.flatMap(segment => segment.tokens);
 }
 
 async function runForegroundWithDetach(options: {
@@ -162,6 +333,10 @@ export async function runCli(argv: string[]): Promise<void> {
     .name('wheel-ai')
     .description('基于 AI CLI 的持续迭代开发工具')
     .version('1.0.0');
+  program.addHelpText(
+    'after',
+    '\n别名执行：\n  wheel-ai alias run <alias> <addition...>\n  追加命令与 alias 重叠时，以追加为准。\n'
+  );
 
   program
     .command('run')
@@ -403,13 +578,55 @@ export async function runCli(argv: string[]): Promise<void> {
       console.log(`已写入 alias：${normalized}`);
     });
 
-  program
+  const aliasCommand = program
     .command('alias')
     .alias('aliases')
-    .description('浏览全局 alias 配置')
-    .action(async () => {
-      await runAliasViewer();
+    .description('浏览全局 alias 配置（alias run 可执行并追加命令）');
+
+  aliasCommand
+    .command('run <name> [addition...]')
+    .description('执行 alias 并追加命令')
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (name: string) => {
+      const normalized = normalizeAliasName(name);
+      if (!normalized) {
+        throw new Error('alias 名称不能为空且不能包含空白字符');
+      }
+
+      const filePath = getGlobalConfigPath();
+      const exists = await fs.pathExists(filePath);
+      if (!exists) {
+        throw new Error(`未找到 alias 配置文件：${filePath}`);
+      }
+
+      const content = await fs.readFile(filePath, 'utf8');
+      const entries = parseAliasEntries(content);
+      const entry = entries.find(item => item.name === normalized);
+      if (!entry) {
+        throw new Error(`未找到 alias：${normalized}`);
+      }
+
+      const aliasTokens = normalizeAliasCommandArgs(splitCommandArgs(entry.command));
+      const additionTokens = extractAliasRunArgs(effectiveArgv, normalized);
+      const mergedTokens = mergeAliasCommandArgs(aliasTokens, additionTokens);
+      if (mergedTokens.length === 0) {
+        throw new Error('alias 命令不能为空');
+      }
+
+      const nextArgv = [process.argv[0], process.argv[1], 'run', ...mergedTokens];
+      const originalArgv = process.argv;
+      process.argv = nextArgv;
+      try {
+        await runCli(nextArgv);
+      } finally {
+        process.argv = originalArgv;
+      }
     });
+
+  aliasCommand.action(async () => {
+    await runAliasViewer();
+  });
 
   await program.parseAsync(effectiveArgv);
 }

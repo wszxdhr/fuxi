@@ -82,6 +82,13 @@ weekly = "run --task \"补充测试\" --run-tests"
 wheel-ai set alias daily --task "补充文档" --run-tests
 ```
 
+也可以直接执行 alias，并在末尾追加命令：
+```bash
+wheel-ai alias run daily --run-e2e --task "补充 e2e"
+```
+- `<addition...>` 支持多个命令/参数组合，等价于将追加内容放在 alias 命令末尾。
+- 当追加的命令/参数与 alias 内已有内容重复时，以追加的为准。
+
 ## 持久化记忆
 - `docs/ai-workflow.md`：AI 执行前的工作流基线，需作为提示前置输入。
 - `memory/plan.md`：分阶段计划（可被 AI 重写保持最新）。

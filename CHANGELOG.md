@@ -2,6 +2,10 @@
 
 本项目遵循语义化版本，变更日志以时间倒序记录。
 
+## [0.2.0-beta.2] - 2025-12-24
+### Added
+- 新增 `alias run` 子命令，支持执行 alias 时追加参数并覆盖同名选项。
+
 ## [0.2.0] - 2025-12-24
 ### Added
 - 支持多任务执行与 multi-task 模式，提供 relay（接力）、serial（串行）、serial-continue（串行继续）、parallel（并行）四种执行方式。
