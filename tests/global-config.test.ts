@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyShortcutArgv, parseAliasEntries, parseGlobalConfig, splitCommandArgs } from '../src/global-config';
+import { applyShortcutArgv, parseAliasEntries, parseGlobalConfig, splitCommandArgs, updateAliasContent } from '../src/global-config';
 
 test('parseGlobalConfig 读取 shortcut 配置', () => {
   const content = `
@@ -79,4 +79,25 @@ command = "--run-e2e"
       source: 'shortcut'
     }
   ]);
+});
+
+test('updateAliasContent 会在空文件中写入 alias', () => {
+  const result = updateAliasContent('', 'daily', '--task "补充文档"');
+  assert.ok(result.includes('[alias]'));
+  assert.ok(result.includes('daily = "--task \\"补充文档\\""'));
+  assert.ok(result.endsWith('\n'));
+});
+
+test('updateAliasContent 会更新已有 alias 并保留其他配置', () => {
+  const content = `
+[alias]
+daily = "--task \\"旧命令\\""
+
+[shortcut]
+name = "quick"
+command = "--run-e2e"
+`;
+  const result = updateAliasContent(content, 'daily', '--task "新命令"');
+  assert.ok(result.includes('daily = "--task \\"新命令\\""'));
+  assert.ok(result.includes('[shortcut]'));
 });

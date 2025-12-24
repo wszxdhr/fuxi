@@ -1,16 +1,20 @@
 import { spawn } from 'node:child_process';
+import fs from 'fs-extra';
 import { Command } from 'commander';
 import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, defaultWorkflowDoc } from './config';
-import { applyShortcutArgv, loadGlobalConfig } from './global-config';
+import { applyShortcutArgv, loadGlobalConfig, normalizeAliasName, upsertAliasEntry } from './global-config';
 import { generateBranchName, getCurrentBranch } from './git';
-import { buildAutoLogFilePath } from './logs';
+import { buildAutoLogFilePath, formatCommandLine } from './logs';
 import { runAliasViewer } from './alias-viewer';
 import { runLogsViewer } from './logs-viewer';
 import { runLoop } from './loop';
 import { defaultLogger } from './logger';
 import { buildTaskPlans, normalizeTaskList, parseMultiTaskMode } from './multi-task';
-import { runMonitor } from './monitor';
+import { resolveTerminationTarget, runMonitor } from './monitor';
+import { tailLogFile } from './log-tailer';
 import { resolvePath } from './utils';
+
+const FOREGROUND_CHILD_ENV = 'WHEEL_AI_FOREGROUND_CHILD';
 
 function parseInteger(value: string, defaultValue: number): number {
   const parsed = Number.parseInt(value, 10);
@@ -42,6 +46,108 @@ function buildBackgroundArgs(argv: string[], logFile: string, branchName?: strin
     filtered.push('--branch', branchName);
   }
   return filtered;
+}
+
+function extractAliasCommandArgs(argv: string[], name: string): string[] {
+  const args = argv.slice(2);
+  const start = args.findIndex((arg, index) => arg === 'set' && args[index + 1] === 'alias' && args[index + 2] === name);
+  if (start < 0) return [];
+  const rest = args.slice(start + 3);
+  if (rest[0] === '--') return rest.slice(1);
+  return rest;
+}
+
+async function runForegroundWithDetach(options: {
+  argv: string[];
+  logFile: string;
+  branchName?: string;
+  injectBranch: boolean;
+  isMultiTask: boolean;
+}): Promise<void> {
+  const args = buildBackgroundArgs(options.argv, options.logFile, options.branchName, options.injectBranch);
+  const child = spawn(process.execPath, [...process.execArgv, ...args], {
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      [FOREGROUND_CHILD_ENV]: '1'
+    }
+  });
+  child.unref();
+
+  const resolvedLogFile = resolvePath(process.cwd(), options.logFile);
+  const existed = await fs.pathExists(resolvedLogFile);
+  const tailer = await tailLogFile({
+    filePath: resolvedLogFile,
+    startFromEnd: existed,
+    onLine: line => {
+      process.stdout.write(`${line}\n`);
+    },
+    onError: message => {
+      defaultLogger.warn(`日志读取失败：${message}`);
+    }
+  });
+
+  const suffixNote = options.isMultiTask ? '（多任务将追加序号）' : '';
+  console.log(`已进入前台日志查看，按 Esc 切到后台运行，日志输出至 ${resolvedLogFile}${suffixNote}`);
+
+  let cleaned = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleaned) return;
+    cleaned = true;
+    await tailer.stop();
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+    }
+  };
+
+  const detach = async (): Promise<void> => {
+    await cleanup();
+    console.log(`已切入后台运行，日志输出至 ${resolvedLogFile}${suffixNote}`);
+    process.exit(0);
+  };
+
+  const terminate = async (): Promise<void> => {
+    if (child.pid) {
+      try {
+        const target = resolveTerminationTarget(child.pid);
+        process.kill(target, 'SIGTERM');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        defaultLogger.warn(`终止子进程失败：${message}`);
+      }
+    }
+    await cleanup();
+    process.exit(0);
+  };
+
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', (data: Buffer) => {
+      const input = data.toString('utf8');
+      if (input === '\u001b') {
+        void detach();
+        return;
+      }
+      if (input === '\u0003') {
+        void terminate();
+      }
+    });
+  }
+
+  process.on('SIGINT', () => {
+    void terminate();
+  });
+  process.on('SIGTERM', () => {
+    void terminate();
+  });
+
+  child.on('exit', async code => {
+    await cleanup();
+    process.exit(code ?? 0);
+  });
 }
 
 /**
@@ -107,6 +213,8 @@ export async function runCli(argv: string[]): Promise<void> {
       const worktreePathInput = normalizeOptional(options.worktreePath);
       const background = Boolean(options.background);
       const isMultiTask = tasks.length > 1;
+      const isForegroundChild = process.env[FOREGROUND_CHILD_ENV] === '1';
+      const canForegroundDetach = !background && !isForegroundChild && process.stdout.isTTY && process.stdin.isTTY;
 
       const shouldInjectBranch = useWorktree && !branchInput && !isMultiTask;
       let branchNameForBackground = branchInput;
@@ -115,7 +223,7 @@ export async function runCli(argv: string[]): Promise<void> {
       }
 
       let logFile = logFileInput;
-      if (background && !logFile) {
+      if ((background || canForegroundDetach) && !logFile) {
         let branchForLog = 'multi-task';
         if (!isMultiTask) {
           branchForLog = branchNameForBackground ?? '';
@@ -146,6 +254,20 @@ export async function runCli(argv: string[]): Promise<void> {
         const displayLogFile = resolvePath(process.cwd(), logFile);
         const suffixNote = isMultiTask ? '（多任务将追加序号）' : '';
         console.log(`已切入后台运行，日志输出至 ${displayLogFile}${suffixNote}`);
+        return;
+      }
+
+      if (canForegroundDetach) {
+        if (!logFile) {
+          throw new Error('切入后台需要指定日志文件');
+        }
+        await runForegroundWithDetach({
+          argv: effectiveArgv,
+          logFile,
+          branchName: branchNameForBackground,
+          injectBranch: shouldInjectBranch,
+          isMultiTask
+        });
         return;
       }
 
@@ -247,6 +369,26 @@ export async function runCli(argv: string[]): Promise<void> {
     .description('查看历史日志')
     .action(async () => {
       await runLogsViewer();
+    });
+
+  program
+    .command('set')
+    .description('写入全局配置')
+    .command('alias <name> [options...]')
+    .description('设置 alias')
+    .allowUnknownOption(true)
+    .action(async (name: string) => {
+      const normalized = normalizeAliasName(name);
+      if (!normalized) {
+        throw new Error('alias 名称不能为空且不能包含空白字符');
+      }
+      const commandArgs = extractAliasCommandArgs(effectiveArgv, name);
+      const commandLine = formatCommandLine(commandArgs);
+      if (!commandLine) {
+        throw new Error('alias 命令不能为空');
+      }
+      await upsertAliasEntry(normalized, commandLine);
+      console.log(`已写入 alias：${normalized}`);
     });
 
   program

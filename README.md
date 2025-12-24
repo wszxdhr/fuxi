@@ -75,13 +75,18 @@ weekly = "run --task \"补充测试\" --run-tests"
 - 底部会显示选中的命令内容
 - alias 名称不能包含空白字符
 
+也可以使用命令行直接写入 alias：
+```bash
+wheel-ai set alias daily --task "补充文档" --run-tests
+```
+
 ## 持久化记忆
 - `docs/ai-workflow.md`：AI 执行前的工作流基线，需作为提示前置输入。
 - `memory/plan.md`：分阶段计划（可被 AI 重写保持最新）。
 - `memory/notes.md`：每轮迭代的输出、结论、风险与下一步。
 
 ## 运行中任务监控
-- `wheel-ai monitor` 启动交互式监控，←/→ 切换任务，↑/↓ 翻页。
+- `wheel-ai monitor` 启动交互式监控，←/→ 切换任务，↑/↓ 上下 1 行，PageUp/PageDown 翻页。
 - 在监控界面按 `t` 触发终止，会弹出确认框（y/n）。
 
 ## Webhook 通知

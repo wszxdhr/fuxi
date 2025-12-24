@@ -78,6 +78,19 @@ test('CLI logs 在非 TTY 下输出提示', async () => {
   assert.ok(stdout.includes('当前终端不支持交互式 logs。'));
 });
 
+test('CLI set alias 帮助信息可正常输出', async () => {
+  const execFileAsync = promisify(execFile);
+  const cliPath = path.join(process.cwd(), 'src', 'cli.ts');
+  const { stdout } = await execFileAsync('node', ['--require', 'ts-node/register', cliPath, 'set', 'alias', '--help'], {
+    env: {
+      ...process.env,
+      FORCE_COLOR: '0'
+    }
+  });
+
+  assert.ok(stdout.includes('Usage: wheel-ai set alias'));
+});
+
 test('CLI alias 帮助信息可正常输出', async () => {
   const execFileAsync = promisify(execFile);
   const cliPath = path.join(process.cwd(), 'src', 'cli.ts');
