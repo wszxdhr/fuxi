@@ -23,7 +23,7 @@ interface MonitorState {
   tasks: TaskView[];
   selectedIndex: number;
   selectedKey?: string;
-  pageOffsets: Map<string, number>;
+  lineOffsets: Map<string, number>;
   stickToBottom: Map<string, boolean>;
   lastError?: string;
   confirm?: ConfirmState;
@@ -166,7 +166,7 @@ function buildHeader(state: MonitorState, columns: number): string {
   const current = state.tasks[state.selectedIndex];
   const total = state.tasks.length;
   const index = state.selectedIndex + 1;
-  const title = `任务 ${index}/${total} ｜ ${current.key} ｜ ←/→ 切换任务  ↑/↓ 翻页  t 终止  q 退出`;
+  const title = `任务 ${index}/${total} ｜ ${current.key} ｜ ←/→ 切换任务  ↑/↓ 上下 1 行  PageUp/PageDown 翻页  t 终止  q 退出`;
   return truncateLine(title, columns);
 }
 
@@ -215,22 +215,24 @@ function render(state: MonitorState): void {
 
   const current = state.tasks[state.selectedIndex];
   const lines = current.lines;
-  const maxOffset = Math.max(0, Math.ceil(lines.length / pageSize) - 1);
-  const offset = state.pageOffsets.get(current.key) ?? maxOffset;
+  const maxOffset = Math.max(0, lines.length - pageSize);
+  const offset = state.lineOffsets.get(current.key) ?? maxOffset;
   const stick = state.stickToBottom.get(current.key) ?? true;
   const nextOffset = Math.min(Math.max(stick ? maxOffset : offset, 0), maxOffset);
-  state.pageOffsets.set(current.key, nextOffset);
+  state.lineOffsets.set(current.key, nextOffset);
   state.stickToBottom.set(current.key, nextOffset === maxOffset);
 
-  const start = nextOffset * pageSize;
+  const start = nextOffset;
   const pageLines = lines.slice(start, start + pageSize).map(line => truncateLine(line, columns));
   while (pageLines.length < pageSize) {
     pageLines.push('');
   }
 
+  const totalPages = Math.max(1, Math.ceil(lines.length / pageSize));
+  const currentPage = Math.min(totalPages, Math.floor(nextOffset / pageSize) + 1);
   const status = buildStatus(
     current,
-    { current: nextOffset + 1, total: Math.max(1, maxOffset + 1) },
+    { current: currentPage, total: totalPages },
     columns,
     state.lastError,
     state.statusMessage,
@@ -266,9 +268,9 @@ function updateSelection(state: MonitorState, tasks: TaskView[]): void {
   state.selectedKey = tasks[state.selectedIndex]?.key;
 
   const existing = new Set(tasks.map(task => task.key));
-  for (const key of state.pageOffsets.keys()) {
+  for (const key of state.lineOffsets.keys()) {
     if (!existing.has(key)) {
-      state.pageOffsets.delete(key);
+      state.lineOffsets.delete(key);
     }
   }
   for (const key of state.stickToBottom.keys()) {
@@ -288,16 +290,29 @@ function moveSelection(state: MonitorState, direction: -1 | 1): void {
   state.selectedKey = state.tasks[state.selectedIndex]?.key;
 }
 
+function moveLine(state: MonitorState, direction: -1 | 1): void {
+  if (state.tasks.length === 0) return;
+  const current = state.tasks[state.selectedIndex];
+  const lines = current.lines;
+  const { rows } = getTerminalSize();
+  const pageSize = getPageSize(rows);
+  const maxOffset = Math.max(0, lines.length - pageSize);
+  const offset = state.lineOffsets.get(current.key) ?? maxOffset;
+  const nextOffset = Math.min(Math.max(offset + direction, 0), maxOffset);
+  state.lineOffsets.set(current.key, nextOffset);
+  state.stickToBottom.set(current.key, nextOffset === maxOffset);
+}
+
 function movePage(state: MonitorState, direction: -1 | 1): void {
   if (state.tasks.length === 0) return;
   const { rows } = getTerminalSize();
   const pageSize = getPageSize(rows);
   const current = state.tasks[state.selectedIndex];
   const lines = current.lines;
-  const maxOffset = Math.max(0, Math.ceil(lines.length / pageSize) - 1);
-  const offset = state.pageOffsets.get(current.key) ?? maxOffset;
-  const nextOffset = Math.min(Math.max(offset + direction, 0), maxOffset);
-  state.pageOffsets.set(current.key, nextOffset);
+  const maxOffset = Math.max(0, lines.length - pageSize);
+  const offset = state.lineOffsets.get(current.key) ?? maxOffset;
+  const nextOffset = Math.min(Math.max(offset + direction * pageSize, 0), maxOffset);
+  state.lineOffsets.set(current.key, nextOffset);
   state.stickToBottom.set(current.key, nextOffset === maxOffset);
 }
 
@@ -377,10 +392,18 @@ function handleInput(state: MonitorState, input: string, refresh: () => Promise<
     return;
   }
   if (input.includes('\u001b[A')) {
-    movePage(state, -1);
+    moveLine(state, -1);
     return;
   }
   if (input.includes('\u001b[B')) {
+    moveLine(state, 1);
+    return;
+  }
+  if (input.includes('\u001b[5~')) {
+    movePage(state, -1);
+    return;
+  }
+  if (input.includes('\u001b[6~')) {
     movePage(state, 1);
     return;
   }
@@ -425,7 +448,7 @@ export async function runMonitor(): Promise<void> {
   const state: MonitorState = {
     tasks: [],
     selectedIndex: 0,
-    pageOffsets: new Map(),
+    lineOffsets: new Map(),
     stickToBottom: new Map()
   };
 

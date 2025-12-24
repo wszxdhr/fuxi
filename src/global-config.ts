@@ -171,6 +171,81 @@ function normalizeShortcutName(name: string): string | null {
 }
 
 /**
+ * 规范化 alias 名称。
+ */
+export function normalizeAliasName(name: string): string | null {
+  return normalizeShortcutName(name);
+}
+
+function formatTomlString(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+  return `"${escaped}"`;
+}
+
+/**
+ * 更新 alias 配置内容，返回新文本。
+ */
+export function updateAliasContent(content: string, name: string, command: string): string {
+  const lines = content.split(/\r?\n/);
+  const entryLine = `${name} = ${formatTomlString(command)}`;
+  let currentSection: string | null = null;
+  let aliasStart = -1;
+  let aliasEnd = lines.length;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^\s*\[(.+?)\]\s*$/.exec(lines[i]);
+    if (!match) continue;
+    if (currentSection === 'alias' && aliasStart >= 0 && aliasEnd === lines.length) {
+      aliasEnd = i;
+    }
+    currentSection = match[1].trim();
+    if (currentSection === 'alias') {
+      aliasStart = i;
+    }
+  }
+
+  if (aliasStart < 0) {
+    const trimmed = content.trimEnd();
+    const prefix = trimmed.length > 0 ? `${trimmed}\n\n` : '';
+    return `${prefix}[alias]\n${entryLine}\n`;
+  }
+
+  let replaced = false;
+  for (let i = aliasStart + 1; i < aliasEnd; i += 1) {
+    const parsed = parseTomlKeyValue(stripTomlComment(lines[i]).trim());
+    if (!parsed) continue;
+    if (parsed.key === name) {
+      lines[i] = entryLine;
+      replaced = true;
+      break;
+    }
+  }
+
+  if (!replaced) {
+    lines.splice(aliasEnd, 0, entryLine);
+  }
+
+  const output = lines.join('\n');
+  return output.endsWith('\n') ? output : `${output}\n`;
+}
+
+/**
+ * 写入或更新 alias 配置。
+ */
+export async function upsertAliasEntry(name: string, command: string, filePath: string = getGlobalConfigPath()): Promise<void> {
+  const exists = await fs.pathExists(filePath);
+  const content = exists ? await fs.readFile(filePath, 'utf8') : '';
+  const nextContent = updateAliasContent(content, name, command);
+  await fs.mkdirp(path.dirname(filePath));
+  await fs.writeFile(filePath, nextContent, 'utf8');
+}
+
+/**
  * 解析全局 TOML 配置文本。
  */
 export function parseGlobalConfig(content: string): GlobalConfig {

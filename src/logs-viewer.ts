@@ -14,7 +14,7 @@ export interface LogEntry {
 interface ViewState {
   entry: LogEntry;
   lines: string[];
-  pageOffset: number;
+  lineOffset: number;
 }
 
 interface LogsViewerState {
@@ -170,7 +170,7 @@ function buildListLine(entry: LogEntry, selected: boolean, columns: number): str
 }
 
 function buildViewHeader(entry: LogEntry, columns: number): string {
-  const title = `日志查看｜${entry.fileName}｜↑/↓ 翻页  b 返回  q 退出`;
+  const title = `日志查看｜${entry.fileName}｜↑/↓ 上下 1 行  PageUp/PageDown 翻页  b 返回  q 退出`;
   return truncateLine(title, columns);
 }
 
@@ -232,16 +232,18 @@ function renderView(view: ViewState): void {
   const { rows, columns } = getTerminalSize();
   const pageSize = getPageSize(rows);
   const header = buildViewHeader(view.entry, columns);
-  const maxOffset = Math.max(0, Math.ceil(view.lines.length / pageSize) - 1);
-  view.pageOffset = Math.min(Math.max(view.pageOffset, 0), maxOffset);
+  const maxOffset = Math.max(0, view.lines.length - pageSize);
+  view.lineOffset = Math.min(Math.max(view.lineOffset, 0), maxOffset);
 
-  const start = view.pageOffset * pageSize;
+  const start = view.lineOffset;
   const pageLines = view.lines.slice(start, start + pageSize).map(line => truncateLine(line, columns));
   while (pageLines.length < pageSize) {
     pageLines.push('');
   }
 
-  const status = buildViewStatus(view.entry, { current: view.pageOffset + 1, total: Math.max(1, maxOffset + 1) }, columns);
+  const totalPages = Math.max(1, Math.ceil(view.lines.length / pageSize));
+  const currentPage = Math.min(totalPages, Math.floor(view.lineOffset / pageSize) + 1);
+  const status = buildViewStatus(view.entry, { current: currentPage, total: totalPages }, columns);
   const content = [header, ...pageLines, status].join('\n');
   process.stdout.write(`\u001b[2J\u001b[H${content}`);
 }
@@ -270,6 +272,14 @@ function isArrowUp(input: string): boolean {
 
 function isArrowDown(input: string): boolean {
   return input.includes('\u001b[B');
+}
+
+function isPageUp(input: string): boolean {
+  return input.includes('\u001b[5~');
+}
+
+function isPageDown(input: string): boolean {
+  return input.includes('\u001b[6~');
 }
 
 function isEscape(input: string): boolean {
@@ -351,16 +361,16 @@ export async function runLogsViewer(): Promise<void> {
     state.view = {
       entry,
       lines: ['加载中…'],
-      pageOffset: 0
+      lineOffset: 0
     };
     render(state);
     const lines = await readLogLines(entry.filePath);
     const pageSize = getPageSize(getTerminalSize().rows);
-    const maxOffset = Math.max(0, Math.ceil(lines.length / pageSize) - 1);
+    const maxOffset = Math.max(0, lines.length - pageSize);
     state.view = {
       entry,
       lines,
-      pageOffset: maxOffset
+      lineOffset: maxOffset
     };
     loading = false;
     render(state);
@@ -396,12 +406,24 @@ export async function runLogsViewer(): Promise<void> {
 
     if (state.mode === 'view' && state.view) {
       if (isArrowUp(input)) {
-        state.view.pageOffset -= 1;
+        state.view.lineOffset -= 1;
         render(state);
         return;
       }
       if (isArrowDown(input)) {
-        state.view.pageOffset += 1;
+        state.view.lineOffset += 1;
+        render(state);
+        return;
+      }
+      if (isPageUp(input)) {
+        const pageSize = getPageSize(getTerminalSize().rows);
+        state.view.lineOffset -= pageSize;
+        render(state);
+        return;
+      }
+      if (isPageDown(input)) {
+        const pageSize = getPageSize(getTerminalSize().rows);
+        state.view.lineOffset += pageSize;
         render(state);
         return;
       }
