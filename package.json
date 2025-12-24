@@ -15,7 +15,7 @@
     "wheel-ai": "dist/cli.js"
   },
   "repository": "git@github.com:wszxdhr/hamster-wheel-cli.git",
-  "author": "ZX <wszxdhr@126.com>",
+  "author": "ZX <x@z-x.vip>",
   "license": "MIT",
   "type": "commonjs",
   "engines": {
