@@ -332,7 +332,7 @@ export async function runCli(argv: string[]): Promise<void> {
   program
     .name('wheel-ai')
     .description('基于 AI CLI 的持续迭代开发工具')
-    .version('1.0.0');
+    .version('0.2.0');
   program.addHelpText(
     'after',
     '\n别名执行：\n  wheel-ai alias run <alias> <addition...>\n  追加命令与 alias 重叠时，以追加为准。\n'
