@@ -8,7 +8,7 @@ test('normalizeWebhookUrls 会去除空值并裁剪空白', () => {
   assert.deepEqual(urls, ['https://example.com', 'http://a.local']);
 });
 
-test('buildWebhookPayload 会补齐时间戳', () => {
+test('buildWebhookPayload 会补齐本地时间戳', () => {
   const payload = buildWebhookPayload({
     event: 'task_start',
     task: 'demo',
@@ -18,7 +18,9 @@ test('buildWebhookPayload 会补齐时间戳', () => {
   assert.equal(payload.event, 'task_start');
   assert.equal(payload.task, 'demo');
   assert.equal(payload.iteration, 0);
-  assert.ok(payload.timestamp.length > 0);
+  assert.match(payload.timestamp, /^\d{8}-\d{6}$/);
+  assert.equal(payload.commit, '');
+  assert.equal(payload.pr, '');
 });
 
 test('sendWebhookNotifications 在无配置时直接跳过', async () => {

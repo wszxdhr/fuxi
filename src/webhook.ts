@@ -1,5 +1,5 @@
 import { Logger } from './logger';
-import { isoNow } from './utils';
+import { localTimestamp } from './utils';
 import type { WebhookConfig } from './types';
 
 export type WebhookEvent = 'task_start' | 'iteration_start' | 'task_end';
@@ -11,6 +11,8 @@ export interface WebhookPayload {
   readonly iteration: number;
   readonly stage: string;
   readonly timestamp: string;
+  readonly commit: string;
+  readonly pr: string;
 }
 
 export interface WebhookPayloadInput {
@@ -20,6 +22,8 @@ export interface WebhookPayloadInput {
   readonly iteration: number;
   readonly stage: string;
   readonly timestamp?: string;
+  readonly commit?: string;
+  readonly pr?: string;
 }
 
 export type FetchLikeResponse = {
@@ -51,7 +55,9 @@ export function buildWebhookPayload(input: WebhookPayloadInput): WebhookPayload 
     branch: input.branch ?? '',
     iteration: input.iteration,
     stage: input.stage,
-    timestamp: input.timestamp ?? isoNow()
+    timestamp: input.timestamp ?? localTimestamp(),
+    commit: input.commit ?? '',
+    pr: input.pr ?? ''
   };
 }
 

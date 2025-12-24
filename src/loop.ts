@@ -24,7 +24,7 @@ import { createRunTracker } from './runtime-tracker';
 import { buildFallbackSummary, buildSummaryPrompt, ensurePrBodySections, parseDeliverySummary } from './summary';
 import { CheckRunResult, CommitMessage, DeliverySummary, LoopConfig, LoopResult, TestRunResult, TokenUsage, WorkflowFiles, WorktreeResult } from './types';
 import { appendSection, ensureFile, isoNow, readFileSafe, runCommand } from './utils';
-import { buildWebhookPayload, sendWebhookNotifications } from './webhook';
+import { WebhookPayload, buildWebhookPayload, sendWebhookNotifications } from './webhook';
 
 async function ensureWorkflowFiles(workflowFiles: WorkflowFiles): Promise<void> {
   await ensureFile(workflowFiles.workflowDoc, '# AI 工作流程基线\n');
@@ -58,6 +58,45 @@ async function safeCommandOutput(command: string, args: string[], cwd: string, l
     return '';
   }
   return result.stdout.trim();
+}
+
+function normalizeWebhookUrl(value?: string | null): string {
+  if (!value) return '';
+  const trimmed = value.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return '';
+  return trimmed;
+}
+
+function normalizeRepoUrl(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) return null;
+  const withoutGit = trimmed.replace(/\.git$/i, '');
+  if (withoutGit.includes('://')) {
+    try {
+      const parsed = new URL(withoutGit);
+      const protocol = parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.protocol : 'https:';
+      const pathname = parsed.pathname.replace(/\.git$/i, '');
+      return `${protocol}//${parsed.host}${pathname}`.replace(/\/+$/, '');
+    } catch {
+      return null;
+    }
+  }
+
+  const scpMatch = withoutGit.match(/^(?:[^@]+@)?([^:]+):(.+)$/);
+  if (!scpMatch) return null;
+  const host = scpMatch[1];
+  const repoPath = scpMatch[2];
+  return `https://${host}/${repoPath}`.replace(/\/+$/, '');
+}
+
+async function resolveCommitLink(cwd: string, logger: Logger): Promise<string> {
+  const sha = await safeCommandOutput('git', ['rev-parse', 'HEAD'], cwd, logger, 'git', 'git rev-parse HEAD');
+  if (!sha) return '';
+  const remote = await safeCommandOutput('git', ['remote', 'get-url', 'origin'], cwd, logger, 'git', 'git remote get-url origin');
+  if (!remote) return '';
+  const repoUrl = normalizeRepoUrl(remote);
+  if (!repoUrl) return '';
+  return `${repoUrl}/commit/${sha}`;
 }
 
 async function runSingleTest(kind: 'unit' | 'e2e', command: string, cwd: string, logger: Logger): Promise<TestRunResult> {
@@ -289,16 +328,22 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
   let prInfo: GhPrInfo | null = null;
   let prFailed = false;
   let sessionIndex = 0;
+  let commitLink = '';
+  let prLink = '';
+  let commitCreated = false;
+  let pushSucceeded = false;
 
   const preWorktreeRecords: string[] = [];
 
   const notifyWebhook = async (event: 'task_start' | 'iteration_start' | 'task_end', iteration: number, stage: string): Promise<void> => {
-    const payload = buildWebhookPayload({
+    const payload: WebhookPayload = buildWebhookPayload({
       event,
       task: config.task,
       branch: branchName,
       iteration,
-      stage
+      stage,
+      commit: commitLink,
+      pr: prLink
     });
     await sendWebhookNotifications(config.webhooks, payload, logger);
   };
@@ -633,6 +678,7 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
         };
         try {
           const committed = await commitAll(commitMessage, workDir, logger);
+          commitCreated = committed;
           deliveryNotes.push(committed ? `自动提交：已提交（${commitMessage.title}）` : '自动提交：未生成提交（可能无变更或提交失败）');
         } catch (error) {
           deliveryNotes.push(`自动提交：失败（${String(error)}）`);
@@ -650,6 +696,7 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
       } else {
         try {
           await pushBranch(branchName, workDir, logger);
+          pushSucceeded = true;
           deliveryNotes.push(`自动推送：已推送（${branchName}）`);
         } catch (error) {
           deliveryNotes.push(`自动推送：失败（${String(error)}）`);
@@ -657,6 +704,10 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
       }
     } else {
       deliveryNotes.push('自动推送：未开启');
+    }
+
+    if (commitCreated && pushSucceeded) {
+      commitLink = await resolveCommitLink(workDir, logger);
     }
 
     if (config.pr.enable) {
@@ -718,6 +769,8 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
     } else {
       deliveryNotes.push('PR 创建：未开启（缺少分支名）');
     }
+
+    prLink = normalizeWebhookUrl(prInfo?.url);
 
     if (deliveryNotes.length > 0) {
       const record = formatSystemRecord('提交与PR', deliveryNotes.join('\n'), isoNow());

@@ -2,6 +2,14 @@
 
 本项目遵循语义化版本，变更日志以时间倒序记录。
 
+## [0.2.1] - 2025-12-24
+### Added
+- webhook payload 新增 `commit` 与 `pr` 字段，用于提交与 PR 链接（无链接时为空字符串）。
+
+### Changed
+- webhook 时间戳改为本地时区 `YYYYMMDD-HHmmss` 格式。
+- logs 列表支持 PageUp/PageDown 翻页，并补充按键提示。
+
 ## [0.2.0] - 2025-12-24
 ### Added
 - 新增 `alias run` 子命令，支持执行 alias 时追加参数并覆盖同名选项。
