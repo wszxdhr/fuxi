@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import fs from 'fs-extra';
 import { Command } from 'commander';
 import { buildLoopConfig, CliOptions, defaultNotesPath, defaultPlanPath, defaultWorkflowDoc } from './config';
@@ -85,6 +86,33 @@ const RUN_OPTION_FLAG_MAP = new Map<string, RunOptionSpec>(
 
 const USE_ALIAS_FLAG = '--use-alias';
 const USE_AGENT_FLAG = '--use-agent';
+const PACKAGE_VERSION_FALLBACK = '0.0.0';
+
+/**
+ * 读取 package.json 中的版本号，失败时返回兜底值。
+ */
+async function resolveCliVersion(): Promise<string> {
+  const candidatePaths = [
+    path.resolve(__dirname, '..', 'package.json'),
+    path.resolve(process.cwd(), 'package.json')
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    const exists = await fs.pathExists(candidatePath);
+    if (!exists) continue;
+    try {
+      const pkg = (await fs.readJson(candidatePath)) as { version?: unknown };
+      if (typeof pkg?.version === 'string') {
+        const trimmed = pkg.version.trim();
+        if (trimmed.length > 0) return trimmed;
+      }
+    } catch {
+      // 读取失败则继续尝试下一个路径。
+    }
+  }
+
+  return PACKAGE_VERSION_FALLBACK;
+}
 
 function parseInteger(value: string, defaultValue: number): number {
   const parsed = Number.parseInt(value, 10);
@@ -499,12 +527,13 @@ async function runForegroundWithDetach(options: {
 export async function runCli(argv: string[]): Promise<void> {
   const globalConfig = await loadGlobalConfig(defaultLogger);
   const effectiveArgv = applyShortcutArgv(argv, globalConfig);
+  const cliVersion = await resolveCliVersion();
   const program = new Command();
 
   program
     .name('wheel-ai')
     .description('基于 AI CLI 的持续迭代开发工具')
-    .version('0.2.1');
+    .version(cliVersion);
   program.addHelpText(
     'after',
     '\nalias 管理：\n  wheel-ai alias set <name> <options...>\n  wheel-ai alias list\n  wheel-ai alias delete <name>\n\nalias/agent 叠加：\n  wheel-ai run --use-alias <name> [--use-alias <name>...]\n  wheel-ai run --use-agent <name> [--use-agent <name>...]\n  同名选项按出现顺序覆盖。\n'
