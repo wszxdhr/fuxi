@@ -106,6 +106,12 @@ wheel-ai agent delete claude
 wheel-ai agent list
 ```
 
+当 agent 命令包含以 `-`/`--` 开头的参数时，已支持直接透传；如需显式终止解析可使用 `--`，例如：
+```bash
+wheel-ai agent set glm goose run --text
+wheel-ai agent set glm -- goose run --text
+```
+
 在 run 中使用 agent：
 ```bash
 wheel-ai run --use-agent claude -t "补充文档"

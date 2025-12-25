@@ -534,9 +534,10 @@ export async function runCli(argv: string[]): Promise<void> {
     .name('wheel-ai')
     .description('基于 AI CLI 的持续迭代开发工具')
     .version(cliVersion);
+  program.enablePositionalOptions();
   program.addHelpText(
     'after',
-    '\nalias 管理：\n  wheel-ai alias set <name> <options...>\n  wheel-ai alias list\n  wheel-ai alias delete <name>\n\nalias/agent 叠加：\n  wheel-ai run --use-alias <name> [--use-alias <name>...]\n  wheel-ai run --use-agent <name> [--use-agent <name>...]\n  同名选项按出现顺序覆盖。\n'
+    '\nalias 管理：\n  wheel-ai alias set <name> <options...>\n  wheel-ai alias list\n  wheel-ai alias delete <name>\n\nalias/agent 叠加：\n  wheel-ai run --use-alias <name> [--use-alias <name>...]\n  wheel-ai run --use-agent <name> [--use-agent <name>...]\n  同名选项按出现顺序覆盖。\n\nagent 录入包含选项时使用 -- 终止解析：\n  wheel-ai agent set <name> -- <command...>\n  例如：wheel-ai agent set glm -- goose run --text\n'
   );
 
   program
@@ -836,6 +837,7 @@ export async function runCli(argv: string[]): Promise<void> {
   agentCommand
     .command('set <name> [command...]')
     .description('写入 agent')
+    .passThroughOptions()
     .allowUnknownOption(true)
     .allowExcessArguments(true)
     .action(async (name: string) => {

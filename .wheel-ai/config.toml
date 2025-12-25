@@ -1,0 +1,2 @@
+[agent]
+glm = "goose run --text"
