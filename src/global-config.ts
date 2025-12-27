@@ -2,6 +2,16 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'fs-extra';
 import type { Logger } from './logger';
+import {
+  collectSectionRanges,
+  ensureTrailingNewline,
+  formatTomlString,
+  isAgentSection,
+  normalizeConfigName,
+  parseTomlKeyValue,
+  stripTomlComment,
+  type TomlSectionRange
+} from './lib/toml-parser';
 
 /**
  * 全局快捷指令配置。
@@ -42,201 +52,18 @@ export function getGlobalConfigPath(): string {
   return path.join(os.homedir(), '.wheel-ai', 'config.toml');
 }
 
-function stripTomlComment(line: string): string {
-  let quote: '"' | '\'' | null = null;
-  let escaped = false;
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote) {
-      if (quote === '"' && char === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (char === '"' || char === '\'') {
-      quote = char;
-      continue;
-    }
-    if (char === '#' || char === ';') {
-      return line.slice(0, i);
-    }
-  }
-  return line;
-}
-
-function findUnquotedIndex(text: string, target: string): number {
-  let quote: '"' | '\'' | null = null;
-  let escaped = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const char = text[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote) {
-      if (quote === '"' && char === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (char === '"' || char === '\'') {
-      quote = char;
-      continue;
-    }
-    if (char === target) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-function parseTomlString(raw: string): string | null {
-  const value = raw.trim();
-  if (value.length < 2) return null;
-  const quote = value[0];
-  if (quote !== '"' && quote !== '\'') return null;
-  let result = '';
-  let escaped = false;
-  for (let i = 1; i < value.length; i += 1) {
-    const char = value[i];
-    if (quote === '"') {
-      if (escaped) {
-        switch (char) {
-          case 'n':
-            result += '\n';
-            break;
-          case 't':
-            result += '\t';
-            break;
-          case 'r':
-            result += '\r';
-            break;
-          case '"':
-          case '\\':
-            result += char;
-            break;
-          default:
-            result += char;
-            break;
-        }
-        escaped = false;
-        continue;
-      }
-      if (char === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (char === quote) {
-        const rest = value.slice(i + 1).trim();
-        if (rest.length > 0) return null;
-        return result;
-      }
-      result += char;
-      continue;
-    }
-
-    if (char === quote) {
-      const rest = value.slice(i + 1).trim();
-      if (rest.length > 0) return null;
-      return result;
-    }
-    result += char;
-  }
-  return null;
-}
-
-function parseTomlKeyValue(line: string): { key: string; value: string } | null {
-  const equalIndex = findUnquotedIndex(line, '=');
-  if (equalIndex <= 0) return null;
-
-  const key = line.slice(0, equalIndex).trim();
-  const valuePart = line.slice(equalIndex + 1).trim();
-  if (!key || !valuePart) return null;
-
-  const parsedValue = parseTomlString(valuePart);
-  if (parsedValue === null) return null;
-
-  return { key, value: parsedValue };
-}
-
-function normalizeShortcutName(name: string): string | null {
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  if (/\s/.test(trimmed)) return null;
-  return trimmed;
-}
-
 /**
  * 规范化 alias 名称。
  */
 export function normalizeAliasName(name: string): string | null {
-  return normalizeShortcutName(name);
+  return normalizeConfigName(name);
 }
 
 /**
  * 规范化 agent 名称。
  */
 export function normalizeAgentName(name: string): string | null {
-  return normalizeShortcutName(name);
-}
-
-function formatTomlString(value: string): string {
-  const escaped = value
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
-  return `"${escaped}"`;
-}
-
-interface SectionRange {
-  readonly name: string;
-  readonly start: number;
-  end: number;
-}
-
-function collectSectionRanges(lines: string[]): SectionRange[] {
-  const ranges: SectionRange[] = [];
-  let current: SectionRange | null = null;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const match = /^\s*\[(.+?)\]\s*$/.exec(lines[i]);
-    if (!match) continue;
-
-    if (current) {
-      current.end = i;
-      ranges.push(current);
-    }
-
-    current = {
-      name: match[1].trim(),
-      start: i,
-      end: lines.length
-    };
-  }
-
-  if (current) {
-    ranges.push(current);
-  }
-
-  return ranges;
-}
-
-function isAgentSection(name: string | null): boolean {
-  return name === 'agent' || name === 'agents';
+  return normalizeConfigName(name);
 }
 
 /**
@@ -347,12 +174,7 @@ export async function removeAliasEntry(name: string, filePath: string = getGloba
   return true;
 }
 
-function ensureTrailingNewline(content: string): string {
-  if (!content) return '';
-  return content.endsWith('\n') ? content : `${content}\n`;
-}
-
-function findAgentRangeWithEntry(lines: string[], ranges: SectionRange[], name: string): SectionRange | null {
+function findAgentRangeWithEntry(lines: string[], ranges: TomlSectionRange[], name: string): TomlSectionRange | null {
   for (const range of ranges) {
     for (let i = range.start + 1; i < range.end; i += 1) {
       const parsed = parseTomlKeyValue(stripTomlComment(lines[i]).trim());
@@ -483,7 +305,7 @@ export function parseGlobalConfig(content: string): GlobalConfig {
     shortcut[parsed.key] = parsed.value;
   }
 
-  const name = normalizeShortcutName(shortcut.name ?? '');
+  const name = normalizeConfigName(shortcut.name ?? '');
   const command = (shortcut.command ?? '').trim();
   if (!name || !command) {
     return {};
@@ -520,7 +342,7 @@ export function parseAliasEntries(content: string): AliasEntry[] {
     const parsed = parseTomlKeyValue(line);
     if (!parsed) continue;
 
-    const name = normalizeShortcutName(parsed.key);
+    const name = normalizeConfigName(parsed.key);
     const command = parsed.value.trim();
     if (!name || !command) continue;
     if (names.has(name)) continue;
@@ -568,7 +390,7 @@ export function parseAgentEntries(content: string): AgentEntry[] {
     const parsed = parseTomlKeyValue(line);
     if (!parsed) continue;
 
-    const name = normalizeShortcutName(parsed.key);
+    const name = normalizeConfigName(parsed.key);
     const command = parsed.value.trim();
     if (!name || !command) continue;
     if (names.has(name)) continue;

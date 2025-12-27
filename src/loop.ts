@@ -25,29 +25,13 @@ import { buildFallbackSummary, buildSummaryPrompt, ensurePrBodySections, parseDe
 import { CheckRunResult, CommitMessage, DeliverySummary, LoopConfig, LoopResult, TestRunResult, TokenUsage, WorkflowFiles, WorktreeResult } from './types';
 import { appendSection, ensureFile, isoNow, readFileSafe, runCommand } from './utils';
 import { WebhookPayload, buildWebhookPayload, sendWebhookNotifications } from './webhook';
+import { normalizeText, trimOutput, truncateText } from './lib/text-utils';
+import { LOG_LIMITS, QUALITY_SKIP_KEYWORDS, TEST_KEYWORDS } from './lib/constants';
 
 async function ensureWorkflowFiles(workflowFiles: WorkflowFiles): Promise<void> {
   await ensureFile(workflowFiles.workflowDoc, '# AI 工作流程基线\n');
   await ensureFile(workflowFiles.planFile, '# 计划\n');
   await ensureFile(workflowFiles.notesFile, '# 持久化记忆\n');
-}
-
-const MAX_LOG_LENGTH = 4000;
-
-function trimOutput(output: string, limit = MAX_LOG_LENGTH): string {
-  if (!output) return '';
-  if (output.length <= limit) return output;
-  return `${output.slice(0, limit)}\n……（输出已截断，原始长度 ${output.length} 字符）`;
-}
-
-function truncateText(text: string, limit = 100): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= limit) return trimmed;
-  return `${trimmed.slice(0, limit)}...`;
-}
-
-function normalizePlanForWebhook(plan: string): string {
-  return plan.replace(/\r\n?/g, '\n');
 }
 
 async function safeCommandOutput(command: string, args: string[], cwd: string, logger: Logger, label: string, verboseCommand: string): Promise<string> {
@@ -191,13 +175,21 @@ function formatSystemRecord(stage: string, detail: string, timestamp: string): s
   ].join('\n');
 }
 
+/**
+ * 判断是否应跳过代码质量检查。
+ */
 function shouldSkipQuality(content: string, cliSkip: boolean): boolean {
   if (cliSkip) return true;
   const normalized = content.replace(/\s+/g, '');
   if (!normalized) return false;
-  return normalized.includes('不要检查代码质量')
-    || normalized.includes('不检查代码质量')
-    || normalized.includes('跳过代码质量');
+  return QUALITY_SKIP_KEYWORDS.some(keyword => normalized.includes(keyword));
+}
+
+/**
+ * 判断计划内容是否包含测试相关事项。
+ */
+function hasTestKeywords(content: string): boolean {
+  return TEST_KEYWORDS.some(keyword => new RegExp(keyword, 'i').test(content));
 }
 
 async function runTests(config: LoopConfig, workDir: string, logger: Logger): Promise<TestRunResult[]> {
@@ -468,7 +460,7 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
     ): Promise<void> => {
       sessionIndex += 1;
       const webhookPlan = stage === '计划生成'
-        ? normalizePlanForWebhook(await readFileSafe(workflowFiles.planFile))
+        ? normalizeText(await readFileSafe(workflowFiles.planFile))
         : undefined;
       await notifyWebhook('iteration_start', sessionIndex, stage, webhookPlan);
       logger.info(`${stage} 提示构建完成，调用 AI CLI...`);
@@ -507,7 +499,7 @@ export async function runLoop(config: LoopConfig): Promise<LoopResult> {
     }
 
     let refreshedPlan = await readFileSafe(workflowFiles.planFile);
-    if (/(测试|test|e2e|单测)/i.test(refreshedPlan)) {
+    if (hasTestKeywords(refreshedPlan)) {
       logger.warn('检测到 plan 中可能包含测试相关事项，建议保留开发内容并移除测试项。');
     }
 

@@ -1,4 +1,15 @@
 import { DeliverySummary, TestRunResult } from './types';
+import {
+  compactLine,
+  extractBulletLines,
+  extractJson,
+  normalizeCommitBody as normalizeBody,
+  normalizeCommitTitle as normalizeTitle,
+  normalizeText,
+  pickString,
+  stripCommitType
+} from './lib/text-utils';
+import { LOG_LIMITS, REQUIRED_PR_SECTIONS } from './lib/constants';
 
 /**
  * 生成交付摘要提示的输入。
@@ -31,16 +42,6 @@ export interface PrBodyFallbackInput {
   readonly testResults: TestRunResult[] | null;
 }
 
-const REQUIRED_SECTIONS = ['# 变更摘要', '# 测试结果', '# 风险与回滚'] as const;
-
-function normalizeText(text: string): string {
-  return text.replace(/\r\n?/g, '\n');
-}
-
-function compactLine(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
-}
-
 function trimTail(text: string, limit: number, emptyFallback: string): string {
   const normalized = normalizeText(text).trim();
   if (!normalized) return emptyFallback;
@@ -71,13 +72,6 @@ function buildSummaryLinesFromCommit(commitTitle: string, commitBody?: string): 
   return [`- ${summary}`];
 }
 
-function stripCommitType(title: string): string {
-  const trimmed = compactLine(title);
-  if (!trimmed) return '更新迭代产出';
-  const match = trimmed.match(/^[^:]+:\s*(.+)$/);
-  return match?.[1]?.trim() || trimmed;
-}
-
 function buildPrBody(summaryLines: string[], testLines: string[]): string {
   const riskLines = ['- 风险：待评估', '- 回滚：git revert 对应提交或关闭 PR'];
   return [
@@ -96,11 +90,11 @@ function buildPrBody(summaryLines: string[], testLines: string[]): string {
  * 构建交付摘要提示词。
  */
 export function buildSummaryPrompt(input: SummaryPromptInput): string {
-  const planSnippet = trimTail(input.plan, 2000, '（计划为空）');
-  const notesSnippet = trimTail(input.notes, 4000, '（notes 为空）');
-  const aiSnippet = trimTail(input.lastAiOutput, 3000, '（本轮无 AI 输出）');
-  const statusSnippet = trimTail(input.gitStatus, 1000, '（git status 为空）');
-  const diffSnippet = trimTail(input.diffStat, 1000, '（diff 统计为空）');
+  const planSnippet = trimTail(input.plan, LOG_LIMITS.PLAN_SNIPPET_LIMIT, '（计划为空）');
+  const notesSnippet = trimTail(input.notes, LOG_LIMITS.NOTES_SNIPPET_LIMIT, '（notes 为空）');
+  const aiSnippet = trimTail(input.lastAiOutput, LOG_LIMITS.AI_OUTPUT_SNIPPET_LIMIT, '（本轮无 AI 输出）');
+  const statusSnippet = trimTail(input.gitStatus, LOG_LIMITS.GIT_STATUS_SNIPPET_LIMIT, '（git status 为空）');
+  const diffSnippet = trimTail(input.diffStat, LOG_LIMITS.DIFF_STAT_SNIPPET_LIMIT, '（diff 统计为空）');
   const testSummary = formatTestResultsForPrompt(input.testResults);
 
   return [
@@ -110,7 +104,7 @@ export function buildSummaryPrompt(input: SummaryPromptInput): string {
     '基于输入信息输出严格 JSON（不要 markdown、不要代码块、不要多余文字）。',
     '要求：',
     '- 全部中文。',
-    '- commitTitle / prTitle 使用 Conventional Commits 格式：<type>: <概要>，简洁具体，不要出现“自动迭代提交/自动 PR”等字样。',
+    '- commitTitle / prTitle 使用 Conventional Commits 格式：<type>: <概要>，简洁具体，不要出现"自动迭代提交/自动 PR"等字样。',
     '- commitBody 为多行要点列表（可为空字符串）。',
     '- prBody 为 Markdown，必须包含标题：# 变更摘要、# 测试结果、# 风险与回滚，并在变更摘要中体现工作总结。',
     '- 不确定处可基于现有信息合理推断，但不要编造测试结果。',
@@ -134,47 +128,6 @@ export function buildSummaryPrompt(input: SummaryPromptInput): string {
   ].join('\n\n');
 }
 
-function pickString(record: Record<string, unknown>, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim().length > 0) {
-      return value.trim();
-    }
-  }
-  return null;
-}
-
-function extractJson(text: string): string | null {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start >= 0 && end > start) {
-    return text.slice(start, end + 1).trim();
-  }
-  return null;
-}
-
-function normalizeTitle(title: string): string {
-  return compactLine(title);
-}
-
-function normalizeBody(body?: string | null): string | undefined {
-  if (!body) return undefined;
-  const normalized = normalizeText(body).trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function extractBulletLines(text?: string | null): string[] {
-  if (!text) return [];
-  const lines = normalizeText(text)
-    .split('\n')
-    .map(line => line.trim())
-    .filter(Boolean);
-  const bullets = lines.filter(line => line.startsWith('- ') || line.startsWith('* '));
-  return bullets.map(line => (line.startsWith('* ') ? `- ${line.slice(2).trim()}` : line));
-}
-
 /**
  * 解析 AI 输出的交付摘要 JSON。
  */
@@ -189,14 +142,14 @@ export function parseDeliverySummary(output: string): DeliverySummary | null {
     let prBody = pickString(parsed, ['prBody', 'pr_body']);
 
     const commitObj = parsed.commit;
-    if ((!commitTitle || !commitBody) && typeof commitObj === 'object' && commitObj !== null) {
+    if ((!commitTitle || !commitBody) && isJsonObject(commitObj)) {
       const commitRecord = commitObj as Record<string, unknown>;
       commitTitle = commitTitle ?? pickString(commitRecord, ['title', 'commitTitle']);
       commitBody = commitBody ?? pickString(commitRecord, ['body', 'commitBody']);
     }
 
     const prObj = parsed.pr;
-    if ((!prTitle || !prBody) && typeof prObj === 'object' && prObj !== null) {
+    if ((!prTitle || !prBody) && isJsonObject(prObj)) {
       const prRecord = prObj as Record<string, unknown>;
       prTitle = prTitle ?? pickString(prRecord, ['title', 'prTitle']);
       prBody = prBody ?? pickString(prRecord, ['body', 'prBody']);
@@ -206,7 +159,7 @@ export function parseDeliverySummary(output: string): DeliverySummary | null {
 
     const normalizedCommitTitle = normalizeTitle(commitTitle);
     const normalizedPrTitle = normalizeTitle(prTitle);
-    const normalizedCommitBody = normalizeBody(commitBody);
+    const normalizedCommitBody = normalizeBody(commitBody ?? undefined);
     const normalizedPrBody = normalizeText(prBody).trim();
 
     if (!normalizedCommitTitle || !normalizedPrTitle || !normalizedPrBody) return null;
@@ -220,6 +173,13 @@ export function parseDeliverySummary(output: string): DeliverySummary | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 类型守卫：检查值是否为普通对象。
+ */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -246,7 +206,7 @@ export function buildFallbackSummary(input: SummaryFallbackInput): DeliverySumma
  */
 export function ensurePrBodySections(prBody: string, fallback: PrBodyFallbackInput): string {
   const normalized = normalizeText(prBody).trim();
-  const hasAll = REQUIRED_SECTIONS.every(section => normalized.includes(section));
+  const hasAll = REQUIRED_PR_SECTIONS.every(section => normalized.includes(section));
   if (hasAll) return normalized;
 
   const summaryLines = buildSummaryLinesFromCommit(fallback.commitTitle, fallback.commitBody);

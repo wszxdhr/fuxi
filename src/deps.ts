@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'fs-extra';
 import { Logger } from './logger';
 import { runCommand } from './utils';
+import { extractPackageManagerField, isJsonObject } from './lib/text-utils';
 
 /**
  * 支持的包管理器类型。
@@ -132,13 +133,6 @@ function resolveSourceLabel(source: PackageManagerSource): string {
   }
 }
 
-function extractPackageManagerField(value: unknown): string | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
-  const candidate = value as Record<string, unknown>;
-  const field = candidate.packageManager;
-  return typeof field === 'string' ? field : undefined;
-}
-
 async function readPackageManagerHints(cwd: string, logger: Logger): Promise<PackageManagerHints | null> {
   const packageJsonPath = path.join(cwd, 'package.json');
   const hasPackageJson = await fs.pathExists(packageJsonPath);
@@ -147,7 +141,9 @@ async function readPackageManagerHints(cwd: string, logger: Logger): Promise<Pac
   let packageManagerField: string | undefined;
   try {
     const packageJson = await fs.readJson(packageJsonPath);
-    packageManagerField = extractPackageManagerField(packageJson);
+    if (isJsonObject(packageJson)) {
+      packageManagerField = extractPackageManagerField(packageJson);
+    }
   } catch (error) {
     logger.warn(`读取 package.json 失败，将改用锁文件判断包管理器: ${String(error)}`);
   }

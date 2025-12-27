@@ -1,6 +1,8 @@
 import { AiCliConfig, AiResult, IterationRecord, TokenUsage } from './types';
 import { runCommand } from './utils';
 import { Logger } from './logger';
+import { compactLine, extractJson, pickString } from './lib/text-utils';
+import { BRANCH_TYPE_ALIASES, BRANCH_NAME, BRANCH_TYPES, type BranchType } from './lib/constants';
 
 interface PromptInput {
   readonly task: string;
@@ -37,10 +39,6 @@ export function buildPrompt(input: PromptInput): string {
   ];
 
   return sections.join('\n\n');
-}
-
-function compactLine(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
 }
 
 interface BranchNamePromptInput {
@@ -264,32 +262,6 @@ export function buildDocsPrompt(input: DocsPromptInput): string {
   ].join('\n\n');
 }
 
-function extractJson(text: string): string | null {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start >= 0 && end > start) {
-    return text.slice(start, end + 1).trim();
-  }
-  return null;
-}
-
-const BRANCH_TYPES = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test'] as const;
-type BranchType = typeof BRANCH_TYPES[number];
-
-const BRANCH_TYPE_ALIASES: Record<string, BranchType> = {
-  feature: 'feat',
-  features: 'feat',
-  bugfix: 'fix',
-  hotfix: 'fix',
-  doc: 'docs',
-  documentation: 'docs',
-  refactoring: 'refactor',
-  chores: 'chore',
-  tests: 'test'
-};
-
 function isBranchType(value: string): value is BranchType {
   return BRANCH_TYPES.includes(value as BranchType);
 }
@@ -310,8 +282,8 @@ function normalizeBranchSlug(value: string): string | null {
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
   if (!cleaned) return null;
-  const trimmed = cleaned.slice(0, 40);
-  if (trimmed.length < 3) return null;
+  const trimmed = cleaned.slice(0, BRANCH_NAME.MAX_SLUG_LENGTH);
+  if (trimmed.length < BRANCH_NAME.MIN_SLUG_LENGTH) return null;
   return trimmed;
 }
 
@@ -341,15 +313,7 @@ export function parseBranchName(output: string): string | null {
   if (jsonText) {
     try {
       const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-      const raw = typeof parsed.branch === 'string'
-        ? parsed.branch
-        : typeof parsed.branchName === 'string'
-          ? parsed.branchName
-          : typeof parsed['分支'] === 'string'
-            ? (parsed['分支'] as string)
-            : typeof parsed['分支名'] === 'string'
-              ? (parsed['分支名'] as string)
-              : null;
+      const raw = pickString(parsed, ['branch', 'branchName', '分支', '分支名']);
       if (raw) {
         const normalized = normalizeBranchNameCandidate(raw);
         if (normalized) return normalized;
